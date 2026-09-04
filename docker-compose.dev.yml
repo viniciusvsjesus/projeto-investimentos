@@ -1,0 +1,19 @@
+# Sobreposição para desenvolvimento. Usa o estágio `dev` da imagem, monta o
+# código-fonte com hot reload e disponibiliza a suíte de testes dentro do
+# container — sem instalar nada na máquina.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api pytest -v
+
+services:
+  api:
+    build:
+      target: dev
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./specs:/app/specs:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: DEBUG

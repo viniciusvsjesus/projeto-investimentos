@@ -1,0 +1,37 @@
+# Segredos — nunca entram na imagem (Artigo V)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Git e CI
+.git/
+.github/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Testes e ferramentas
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE e sistema
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Documentação de processo — não é preciso na imagem de runtime
+.specify/
+README.md
