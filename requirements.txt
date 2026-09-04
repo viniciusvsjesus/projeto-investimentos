@@ -1,0 +1,9 @@
+# Dependências de runtime. Versões fixas por decisão da clarificação Q5
+# (pip + requirements.txt, sem lockfile — pin exato compensa).
+
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+httpx==0.27.2
+redis==5.2.1

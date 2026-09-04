@@ -1,0 +1,52 @@
+# Configuração de ferramentas. As dependências ficam em requirements*.txt
+# (decisão Q5), não aqui.
+
+[tool.pytest.ini_options]
+# Layout src/ (ADR-007): o pacote não é importado por acidente do diretório raiz.
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Contract tests batem na BRAPI real: excluídos por padrão, opt-in com -m contract.
+addopts = "-m 'not contract' --strict-markers"
+markers = [
+    "contract: bate na BRAPI real; exige rede e BRAPI_TOKEN (pytest -m contract)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "N",        # pep8-naming
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "RUF",      # ruff
+]
+ignore = [
+    "B008",   # Depends() no default de argumento é o idioma do FastAPI
+    "UP017",  # datetime.UTC é 3.11+; timezone.utc mantém a suíte rodando em 3.10
+    "RUF002", # travessão em docstring escrita em português
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["investimentos"]
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
