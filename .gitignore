@@ -1,0 +1,64 @@
+# ==========================================================================
+# SEGREDOS — Artigo V da constituição.
+# Este bloco vem primeiro de propósito: .gitignore depois do primeiro commit
+# é tarde demais.
+# ==========================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtualenv
+.venv/
+venv/
+env/
+ENV/
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Type checking e lint
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
