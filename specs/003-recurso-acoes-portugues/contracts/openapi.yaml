@@ -1,0 +1,244 @@
+# Contrato PUBLICADO a partir da Spec 003. Escrito ANTES da implementação.
+# Substitui o da Spec 002. integration/test_openapi.py compara com ESTE arquivo.
+openapi: 3.1.0
+
+info:
+  title: Projeto Investimentos API
+  version: 3.0.0
+  description: |
+    Cotações de ativos da B3 em contrato próprio, estável e em português.
+
+    Versão 3.0.0 — quebra registrada no FR-003: `/ticker` deu lugar a `/acoes`,
+    e todos os campos de resposta passaram a ter nome em português.
+
+servers:
+  - url: http://localhost:8000
+
+tags:
+  - name: acoes
+    description: Cotações de ativos
+  - name: sistema
+    description: Saúde e metadados do serviço
+
+paths:
+  /:
+    get:
+      tags: [sistema]
+      summary: Índice do serviço
+      operationId: index
+      responses:
+        "200":
+          description: Índice em JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndiceResponse" }
+
+  /health:
+    get:
+      tags: [sistema]
+      summary: Estado do serviço e das dependências
+      operationId: health
+      responses:
+        "200":
+          description: Serviço no ar; `degradado` quando o cache está fora
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SaudeResponse" }
+
+  /acoes/{ticker}:
+    get:
+      tags: [acoes]
+      summary: Cotação de um ativo
+      description: Devolve **um objeto**. Ativo inexistente é `404`.
+      operationId: getAcao
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          description: |
+            Código de negociação na B3. Aceita minúsculas.
+            O `pattern` é documentação: a regra vive no domínio, e um código fora
+            dela devolve `400` com o corpo de erro padrão.
+          schema:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9]{3}[0-9]{1,2}[Ff]?$"
+            examples: [ITSA4, PETR4, B3SA3, AAPL34]
+      responses:
+        "200":
+          description: Cotação encontrada
+          headers:
+            Cache-Control:
+              description: Validade **restante** da cotação, ou `no-store`
+              schema: { type: string, example: "public, max-age=42" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CotacaoResponse" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "404": { $ref: "#/components/responses/Problema" }
+        "502": { $ref: "#/components/responses/Problema" }
+        "503": { $ref: "#/components/responses/ProblemaComRetry" }
+        "504": { $ref: "#/components/responses/Problema" }
+
+  /acoes:
+    get:
+      tags: [acoes]
+      summary: Cotação de vários ativos
+      description: |
+        Devolve **sempre uma lista**, inclusive com um elemento.
+
+        Cada ativo é procurado no cache individualmente; só os ausentes vão à
+        fonte externa, e em uma única chamada.
+
+        Ativo bem formado que a bolsa não conhece volta na lista com
+        `situacao: naoEncontrada`. Código com formato inválido derruba a
+        requisição inteira com `400`, sem consumir cota.
+      operationId: listAcoes
+      parameters:
+        - name: ticker
+          in: query
+          required: true
+          description: |
+            Repita o parâmetro para consultar vários:
+            `?ticker=ITSA4&ticker=PETR4`. Repetições do mesmo código contam uma
+            vez. A ordem da resposta acompanha a do pedido.
+          schema:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              pattern: "^[A-Za-z][A-Za-z0-9]{3}[0-9]{1,2}[Ff]?$"
+      responses:
+        "200":
+          description: Consulta resolvida; itens não encontrados vêm marcados
+          headers:
+            Cache-Control:
+              description: Menor validade restante entre os itens, ou `no-store`
+              schema: { type: string, example: "public, max-age=12" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AcaoConsultada" }
+        "400": { $ref: "#/components/responses/Problema" }
+        "502": { $ref: "#/components/responses/Problema" }
+        "503": { $ref: "#/components/responses/ProblemaComRetry" }
+        "504": { $ref: "#/components/responses/Problema" }
+
+components:
+  responses:
+    Problema:
+      description: Erro, no formato único da API
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+    ProblemaComRetry:
+      description: Cota da fonte esgotada
+      headers:
+        Retry-After:
+          description: Segundos a aguardar, repassados da fonte
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetail" }
+
+  schemas:
+    CotacaoResponse:
+      type: object
+      required: [ticker, nomeCurto, moeda, preco, cotadoEm, fonte, emCache]
+      properties:
+        ticker:             { type: string, example: ITSA4 }
+        nomeCurto:          { type: string, example: ITSA4 }
+        nomeLongo:          { type: [string, "null"], example: Itausa SA }
+        moeda:              { type: string, minLength: 3, maxLength: 3, example: BRL }
+        preco:              { type: number, example: 11.42 }
+        variacao:           { type: [number, "null"], example: -0.35 }
+        variacaoPercentual: { type: [number, "null"], example: -0.95 }
+        volume:             { type: [integer, "null"], example: 27681100 }
+        valorDeMercado:     { type: [number, "null"], example: 483937892568 }
+        cotadoEm:
+          type: string
+          format: date-time
+          description: Instante informado pela fonte, em UTC
+          example: "2026-09-06T17:24:54Z"
+        fonte:              { type: string, example: brapi }
+        emCache:
+          type: boolean
+          description: Indica se veio do cache
+          example: false
+
+    AcaoConsultada:
+      type: object
+      description: |
+        Um ativo pedido e o que aconteceu com ele. A cotação vem envelopada, e
+        não achatada, para que `preco` continue obrigatório e não anulável.
+      required: [ticker, situacao, cotacao]
+      properties:
+        ticker:
+          type: string
+          description: O código pedido, normalizado para maiúsculas
+          example: ITSA4
+        situacao:
+          type: string
+          enum: [encontrada, naoEncontrada]
+        cotacao:
+          description: A cotação, ou `null` quando `situacao` é `naoEncontrada`
+          oneOf:
+            - $ref: "#/components/schemas/CotacaoResponse"
+            - type: "null"
+
+    RotasDisponiveis:
+      type: object
+      required: [acao, acoes, saude, openapi, documentacao]
+      properties:
+        acao:         { type: string, example: "/acoes/{ticker}" }
+        acoes:        { type: string, example: "/acoes?ticker=ITSA4&ticker=PETR4" }
+        saude:        { type: string, example: /health }
+        openapi:      { type: string, example: /openapi.json }
+        documentacao: { type: string, example: /docs }
+
+    IndiceResponse:
+      type: object
+      required: [servico, versao, situacao, exemplo, rotas]
+      properties:
+        servico:  { type: string, example: Projeto Investimentos API }
+        versao:   { type: string, example: 3.0.0 }
+        situacao: { type: string, example: ok }
+        exemplo:
+          type: string
+          description: URL pronta para colar no navegador
+          example: http://localhost:8000/acoes/ITSA4
+        rotas:
+          $ref: "#/components/schemas/RotasDisponiveis"
+
+    DependenciasSaude:
+      type: object
+      required: [cache]
+      properties:
+        cache:
+          type: string
+          enum: [ok, indisponivel, desligado]
+
+    SaudeResponse:
+      type: object
+      required: [situacao, dependencias]
+      properties:
+        situacao:
+          type: string
+          enum: [ok, degradado]
+        dependencias:
+          $ref: "#/components/schemas/DependenciasSaude"
+
+    ProblemDetail:
+      type: object
+      description: |
+        Corpo único de erro (Artigo VIII). Os **nomes** dos campos seguem o
+        RFC 9457 e não são traduzidos — é o que dá sentido ao
+        `application/problem+json` que a API declara. Os **valores** estão em
+        português. Ver ADR-017.
+      required: [type, title, status]
+      properties:
+        type:     { type: string, example: "https://projeto-investimentos/errors/too-many-tickers" }
+        title:    { type: string, example: "Ativos demais na requisição" }
+        status:   { type: integer, example: 400 }
+        detail:   { type: [string, "null"] }
+        instance: { type: [string, "null"], example: "/acoes" }
