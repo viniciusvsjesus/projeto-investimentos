@@ -289,40 +289,87 @@ uvicorn investimentos.main:app --reload --app-dir src
 
 ---
 
-## O processo: SDD
+## O processo: SDD com o GitHub Spec Kit
 
 Este projeto não começou pelo código. Começou pela constituição, passou por
-entrevista, especificação e plano, e só então virou implementação. O fluxo é o
-do [GitHub Spec Kit](https://github.com/github/spec-kit).
+entrevista, especificação e plano, e só então virou implementação.
 
-```
-constitution → specify → clarify → plan → tasks → implement
-```
+O fluxo é o do [GitHub Spec Kit](https://github.com/github/spec-kit), e a
+ferramenta oficial está instalada no repositório — não é uma imitação do
+processo, é o Spec Kit de verdade (versão 1.0.4, integração Claude, scripts em
+shell).
 
-| Artefato | Onde | O que responde |
-|---|---|---|
-| Constituição | `.specify/memory/constitution.md` | As regras que o código não pode violar |
-| Especificação | `specs/001-cotacao-ticker/spec.md` | O quê e por quê |
-| Clarificação | `specs/001-cotacao-ticker/clarify.md` | Cada ambiguidade e como foi resolvida |
-| Plano | `specs/001-cotacao-ticker/plan.md` | Como, com o portão constitucional |
-| Pesquisa | `specs/001-cotacao-ticker/research.md` | Decisões técnicas e alternativas descartadas |
-| Modelo de dados | `specs/001-cotacao-ticker/data-model.md` | Estruturas e contratos |
-| Contratos | `specs/001-cotacao-ticker/contracts/` | O que publicamos e o que consumimos |
-| Tarefas | `specs/001-cotacao-ticker/tasks.md` | Backlog rastreável até o requisito |
-| Quickstart | `specs/001-cotacao-ticker/quickstart.md` | Roteiro de validação manual |
+### Os comandos
+
+Dentro do Claude Code, na ordem:
+
+| Comando | O que faz |
+|---|---|
+| `/speckit-constitution` | Cria ou atualiza os princípios que governam o projeto |
+| `/speckit-specify` | Descreve o que construir — requisitos e histórias de usuário |
+| `/speckit-clarify` | Levanta e resolve as ambiguidades (antes do plano) |
+| `/speckit-plan` | Traduz a especificação em arquitetura e decisões técnicas |
+| `/speckit-checklist` | Gera o checklist de qualidade dos requisitos |
+| `/speckit-tasks` | Deriva o backlog executável do plano |
+| `/speckit-analyze` | Confere consistência entre spec, plano e tarefas |
+| `/speckit-implement` | Executa as tarefas |
+| `/speckit-converge` | Compara o código com spec/plano e anexa o que ficou faltando |
+
+`clarify`, `checklist` e `analyze` são opcionais no Spec Kit. Neste projeto os
+três são usados: a constituição exige que ambiguidade vire pergunta registrada
+(Artigo I) e que todo requisito tenha teste (Artigo IV).
+
+### O que fica no repositório
+
+| Caminho | O que é |
+|---|---|
+| `.specify/memory/constitution.md` | Os 10 artigos que o código não pode violar |
+| `.specify/templates/` | Moldes oficiais de spec, plano, tarefas, checklist e constituição |
+| `.specify/scripts/bash/` | Scripts que os comandos chamam para resolver caminhos e pré-requisitos |
+| `.specify/workflows/` | Definição do ciclo completo |
+| `.claude/skills/speckit-*/` | Os comandos em si, como skills do Claude Code |
+| `specs/NNN-slug/` | Os artefatos de cada feature |
+
+`.specify/feature.json` aponta para a feature ativa e **não** é versionado — é
+estado da sua máquina, e o próprio Spec Kit o ignora.
+
+### Os artefatos da Spec 001
+
+| Arquivo | O que responde |
+|---|---|
+| `spec.md` | O quê e por quê |
+| `clarify.md` | Cada ambiguidade e como foi resolvida (Q1 a Q9) |
+| `plan.md` | Como, com o portão de conformidade constitucional |
+| `research.md` | Decisões técnicas e alternativas descartadas (ADR-001 a ADR-008) |
+| `data-model.md` | Estruturas do domínio e contratos |
+| `contracts/` | O OpenAPI que publicamos e o contrato que consumimos |
+| `tasks.md` | Backlog rastreável até o requisito |
+| `checklists/requirements.md` | Revisão de qualidade dos requisitos |
+| `quickstart.md` | Roteiro de validação manual |
 
 Todo requisito tem rastro até o teste que o prova — a tabela está em
 `plan.md` §8.
 
-**Para a próxima feature:** copie os moldes de `.specify/templates/`, crie
-`specs/002-<slug>/`, e siga a mesma ordem. A constituição vale para ela também.
+### Para a próxima feature
 
-Vale reparar em duas coisas que o processo pegou e que código-primeiro deixaria
-passar: a regra do ticker reprovava `B3SA3` — um código legítimo da própria B3 —
-e foi um teste que expôs isso; e o `symbol` do endpoint v2 fica fora de `data`,
-detalhe que só apareceu quando o payload real entrou como fixture.
+É só rodar `/speckit-specify` descrevendo o que você quer. O Spec Kit cria
+`specs/002-<slug>/`, aponta o `feature.json` para lá e conduz o resto do ciclo.
+A constituição vale para ela também.
 
----
+Para mexer na própria instalação do Spec Kit (atualizar, trocar de integração,
+ver o que está disponível):
+
+```bash
+uv tool install specify-cli
+specify check
+```
+
+### Duas coisas que o processo pegou
+
+Vale reparar em defeitos que código-primeiro deixaria passar: a regra do ticker
+reprovava `B3SA3` — um código legítimo da própria B3 — e foi um teste que expôs
+isso; e o `symbol` do endpoint v2 fica fora de `data`, detalhe que só apareceu
+quando o payload real entrou como fixture.
 
 ## Escopo do MVP
 
