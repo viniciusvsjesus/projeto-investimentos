@@ -7,6 +7,7 @@ muda este arquivo — o contrato que publicamos continua igual.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -89,8 +90,12 @@ def normalize_item(item: Any) -> dict[str, Any]:
     return merged
 
 
-def extract_first_item(payload: Any) -> dict[str, Any] | None:
-    """Retira o primeiro item de ``results``. ``None`` quando não há resultado."""
+def extract_items(payload: Any) -> list[dict[str, Any]]:
+    """Devolve todos os itens de ``results``, já normalizados.
+
+    ADR-014: a Spec 002 lê a lista inteira, não só o primeiro elemento — a
+    resposta da fonte sempre foi uma lista, nós é que pedíamos um ativo só.
+    """
     if not isinstance(payload, dict):
         raise QuoteProviderContractError(
             f"Resposta deveria ser um objeto JSON, recebido {type(payload).__name__}."
@@ -101,10 +106,37 @@ def extract_first_item(payload: Any) -> dict[str, Any] | None:
         raise QuoteProviderContractError("Resposta da fonte não contém o campo 'results'.")
     if not isinstance(results, list):
         raise QuoteProviderContractError("O campo 'results' deveria ser uma lista.")
-    if not results:
-        return None
 
-    return normalize_item(results[0])
+    return [normalize_item(item) for item in results]
+
+
+def to_quotes(payload: Any, requested: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+    """Traduz a resposta da fonte em um mapa indexado pelo código do ativo.
+
+    ADR-014: o casamento entre pedido e resposta é feito **por código**, nunca
+    por posição. Nada garante que a fonte devolva na ordem pedida nem que
+    devolva todos; casar por índice produziria, no pior caso, a cotação de um
+    ativo atribuída a outro — defeito que passa despercebido porque a resposta
+    parece perfeitamente válida.
+
+    Só entram no mapa os ativos que foram pedidos. Um item cujo ``symbol`` não
+    passa na regra do ``Ticker`` — um índice, por exemplo — é ignorado em vez de
+    derrubar o lote: ele não foi pedido, então não pode estragar o resultado de
+    quem foi.
+    """
+    pedidos = {t.value: t for t in requested}
+    resolvidos: dict[Ticker, Quote] = {}
+
+    for item in extract_items(payload):
+        simbolo = item.get("symbol")
+        if not isinstance(simbolo, str):
+            continue
+        pedido = pedidos.get(simbolo.strip().upper())
+        if pedido is None:
+            continue
+        resolvidos[pedido] = to_quote(item, pedido)
+
+    return resolvidos
 
 
 def to_quote(item: dict[str, Any], requested: Ticker) -> Quote:

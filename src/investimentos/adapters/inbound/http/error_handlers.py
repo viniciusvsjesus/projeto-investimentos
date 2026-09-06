@@ -21,6 +21,7 @@ from investimentos.domain.exceptions import (
     QuoteProviderError,
     QuoteProviderRateLimitedError,
     QuoteProviderTimeoutError,
+    TooManyTickersError,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ _ERROR_BASE = "https://projeto-investimentos/errors"
 # exceção -> (status, slug do type, title)
 _ERROR_MAP: dict[type[DomainError], tuple[int, str, str]] = {
     InvalidTickerError: (400, "invalid-ticker", "Código de ativo inválido"),
+    TooManyTickersError: (400, "too-many-tickers", "Ativos demais na requisição"),
     QuoteNotFoundError: (404, "quote-not-found", "Cotação não encontrada"),
     QuoteProviderAuthError: (502, "provider-auth", "Falha de autenticação na fonte de dados"),
     QuoteProviderRateLimitedError: (503, "provider-rate-limited", "Fonte de dados indisponível"),
@@ -41,11 +43,17 @@ _ERROR_MAP: dict[type[DomainError], tuple[int, str, str]] = {
 
 
 def _problem(
-    request: Request, status: int, slug: str, title: str, detail: str | None
+    request: Request,
+    status: int,
+    slug: str,
+    title: str,
+    detail: str | None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         media_type=PROBLEM_CONTENT_TYPE,
+        headers=headers,
         content={
             "type": f"{_ERROR_BASE}/{slug}",
             "title": title,
@@ -68,11 +76,18 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _domain_error(request: Request, exc: DomainError) -> JSONResponse:
         status, slug, title = _resolve(exc)
+
+        # ADR-013: o tempo de espera da fonte é repassado a quem chamou, em vez
+        # de virar uma nova tentativa silenciosa que prenderia a conexão.
+        headers: dict[str, str] | None = None
+        if isinstance(exc, QuoteProviderRateLimitedError) and exc.retry_after is not None:
+            headers = {"Retry-After": str(exc.retry_after)}
+
         if status >= 500:
             logger.error("%s em %s: %s", type(exc).__name__, request.url.path, exc.message)
         else:
             logger.info("%s em %s", type(exc).__name__, request.url.path)
-        return _problem(request, status, slug, title, exc.message)
+        return _problem(request, status, slug, title, exc.message, headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

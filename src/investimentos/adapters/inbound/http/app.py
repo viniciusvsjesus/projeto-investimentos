@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from investimentos.adapters.inbound.http.error_handlers import register_error_handlers
-from investimentos.adapters.inbound.http.routers import cotacao, health, root
+from investimentos.adapters.inbound.http.routers import health, root, ticker
 from investimentos.config.container import Container
 from investimentos.config.logging import configure_logging
 from investimentos.config.settings import Settings, get_settings
@@ -21,8 +21,15 @@ _DESCRIPTION = """
 API que expõe cotações de ativos da B3 em um contrato próprio e estável,
 isolando os consumidores da fonte externa de dados.
 
-Uso: `GET /cotacao/{ticker}` — por exemplo,
-[`/cotacao/PETR4`](/cotacao/PETR4). A resposta é JSON puro.
+Uso:
+
+- `GET /ticker/{ticker}` — um ativo, devolve um objeto.
+  Exemplo: [`/ticker/PETR4`](/ticker/PETR4)
+- `GET /ticker?ticker=A&ticker=B` — vários, devolve uma lista.
+  Exemplo: [`/ticker?ticker=ITSA4&ticker=PETR4`](/ticker?ticker=ITSA4&ticker=PETR4)
+
+Cada ativo é procurado no cache individualmente; só os ausentes vão à fonte
+externa, e numa única chamada.
 
 Construída por **SDD** (desenvolvimento guiado por especificação). Os artefatos
 que originaram cada linha deste serviço estão em `specs/001-cotacao-ticker/`,
@@ -64,6 +71,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_error_handlers(app)
     app.include_router(root.router)
     app.include_router(health.router)
-    app.include_router(cotacao.router)
+    app.include_router(ticker.router)
 
     return app

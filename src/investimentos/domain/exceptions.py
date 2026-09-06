@@ -20,6 +20,25 @@ class InvalidTickerError(DomainError):
     """Código de ativo fora do padrão da B3 (RN-01)."""
 
 
+class TooManyTickersError(DomainError):
+    """Foram pedidos mais ativos do que cabe numa requisição.
+
+    É erro de domínio, não de transporte: a cota da fonte é finita, e quantos
+    ativos cabem numa consulta é regra do problema, não detalhe de HTTP.
+
+    Carrega os números para que a mensagem seja útil sem o adapter ter de
+    recalcular nada.
+    """
+
+    def __init__(self, requested: int, limit: int) -> None:
+        super().__init__(
+            f"Foram pedidos {requested} ativos, mas o limite por requisição é {limit}. "
+            f"Divida a consulta em partes menores."
+        )
+        self.requested = requested
+        self.limit = limit
+
+
 class QuoteNotFoundError(DomainError):
     """A fonte respondeu, mas não conhece o ativo pedido."""
 
@@ -45,7 +64,17 @@ class QuoteProviderAuthError(QuoteProviderError):
 
 
 class QuoteProviderRateLimitedError(QuoteProviderError):
-    """A cota de uso da fonte foi esgotada."""
+    """A cota de uso da fonte foi esgotada.
+
+    Carrega o tempo de espera que a fonte informou, quando informa. Ele é
+    repassado a quem chamou (ADR-013) em vez de virar uma nova tentativa
+    silenciosa: insistir por conta própria prenderia o cliente por segundos sem
+    que ele tivesse pedido isso.
+    """
+
+    def __init__(self, message: str, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class QuoteProviderTimeoutError(QuoteProviderError):

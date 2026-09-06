@@ -17,10 +17,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+# O contrato vigente é o da Spec 002. O da Spec 001 fica no repositório como
+# registro histórico daquela entrega, e não é mais comparado com a implementação.
 CONTRATO = (
     Path(__file__).resolve().parents[2]
     / "specs"
-    / "001-cotacao-ticker"
+    / "002-multiplos-tickers"
     / "contracts"
     / "openapi.yaml"
 )

@@ -27,6 +27,7 @@ services:
     # chaves, então a interpolação é segura. O que vier do .env tem precedência
     # sobre estes padrões, porque o Compose também lê o .env para interpolar.
     environment:
+      MAX_TICKERS_PER_REQUEST: ${MAX_TICKERS_PER_REQUEST:-3}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
       APP_ENV: ${APP_ENV:-development}

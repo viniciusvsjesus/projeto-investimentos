@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # --- Aplicação ---
     app_name: str = "Projeto Investimentos API"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"
     app_env: str = "development"
     log_level: str = "INFO"
 
@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     # sem recompilar, caso a BRAPI mude de geração outra vez.
     brapi_quote_path: str = "/api/v2/stocks/quote?symbols={ticker}"
     brapi_timeout_seconds: float = Field(default=8.0, gt=0)
+
+    # --- Limites de consulta ---
+    # Quantos ativos cabem numa requisição a GET /ticker.
+    #
+    # O padrão 3 é o teto assumido do plano gratuito da fonte. A documentação
+    # pública dela declara 10 no plano Startup e 20 no Pro, mas não publica o
+    # número do gratuito — por isso é configuração e não constante.
+    #
+    # ATENÇÃO: elevar este valor acima do teto do plano exige implementar o
+    # fatiamento do lote antes. Hoje uma chamada sempre basta justamente porque
+    # este número é menor que o limite da fonte. Ver o Complexity Tracking em
+    # specs/002-multiplos-tickers/plan.md.
+    max_tickers_per_request: int = Field(default=3, ge=1)
 
     # --- Cache ---
     # Vazio desliga o cache: o container monta o NullQuoteCache e a API segue

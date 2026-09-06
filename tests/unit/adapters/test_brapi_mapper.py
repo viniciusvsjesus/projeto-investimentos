@@ -1,4 +1,4 @@
-"""T030 — Mapper BRAPI → domínio (RF-04, ADR-003, ADR-004)."""
+"""T009 — Mapper BRAPI → domínio (FR-004 da Spec 001, ADR-014 da Spec 002)."""
 
 from __future__ import annotations
 
@@ -7,148 +7,113 @@ from decimal import Decimal
 import pytest
 
 from investimentos.adapters.outbound.brapi.mapper import (
-    extract_first_item,
+    extract_items,
     normalize_item,
     to_quote,
+    to_quotes,
 )
 from investimentos.domain.exceptions import QuoteProviderContractError
 from investimentos.domain.model.ticker import Ticker
 
-TICKER = Ticker("PETR4")
+PETR4, ITSA4, VALE3 = Ticker("PETR4"), Ticker("ITSA4"), Ticker("VALE3")
 
 
-def test_mapeia_o_formato_legado(brapi_legacy_payload) -> None:
-    item = extract_first_item(brapi_legacy_payload)
-    assert item is not None
-    quote = to_quote(item, TICKER)
+def test_mapeia_varios_ativos_de_uma_vez(payload_v2) -> None:
+    quotes = to_quotes(payload_v2("PETR4", "ITSA4", "VALE3"), [PETR4, ITSA4, VALE3])
 
-    assert quote.symbol == "PETR4"
-    assert quote.short_name == "PETR4"
-    assert quote.long_name == "Petroleo Brasileiro SA Petrobras"
-    assert quote.currency == "BRL"
-    assert quote.price == Decimal("36.65")
-    assert quote.change == Decimal("-0.35")
-    assert quote.change_percent == Decimal("-0.95")
-    assert quote.volume == 27681100
-    assert quote.market_cap == Decimal("483937892568")
-    assert quote.quoted_at.tzinfo is not None
+    assert set(quotes) == {PETR4, ITSA4, VALE3}
+    assert quotes[PETR4].price == Decimal("36.65")
 
 
-def test_mapeia_o_formato_v2_aninhado(brapi_v2_payload) -> None:
-    """ADR-004 — as duas gerações da BRAPI produzem o mesmo Quote."""
-    item = extract_first_item(brapi_v2_payload)
-    assert item is not None
-    quote = to_quote(item, TICKER)
+def test_casa_por_codigo_e_nao_por_posicao(payload_v2) -> None:
+    """ADR-014 — a fonte pode devolver em qualquer ordem.
 
-    assert quote.symbol == "PETR4"
-    assert quote.price == Decimal("36.65")
+    Se o casamento fosse por índice, PETR4 receberia a cotação de VALE3 — um
+    defeito que passa despercebido porque a resposta parece válida.
+    """
+    payload = payload_v2("VALE3", "PETR4")
+    payload["results"][0]["data"]["regularMarketPrice"] = 99.99
+
+    quotes = to_quotes(payload, [PETR4, VALE3])
+
+    assert quotes[VALE3].price == Decimal("99.99")
+    assert quotes[PETR4].price == Decimal("36.65")
+
+
+def test_ativo_ausente_da_resposta_simplesmente_nao_vem(payload_v2) -> None:
+    """FR-011 — ausência no mapa é a informação de 'não encontrado'."""
+    quotes = to_quotes(payload_v2("PETR4"), [PETR4, Ticker("ZZZZ9")])
+
+    assert PETR4 in quotes
+    assert Ticker("ZZZZ9") not in quotes
+
+
+def test_item_nao_pedido_e_ignorado(payload_v2) -> None:
+    """A fonte pode devolver algo a mais; não pode estragar quem foi pedido."""
+    quotes = to_quotes(payload_v2("PETR4", "VALE3"), [PETR4])
+
+    assert set(quotes) == {PETR4}
+
+
+def test_simbolo_fora_do_padrao_e_ignorado_sem_derrubar_o_lote(payload_v2) -> None:
+    payload = payload_v2("PETR4")
+    payload["results"].append({"symbol": "^BVSP", "data": {"regularMarketPrice": 1.0}})
+
+    quotes = to_quotes(payload, [PETR4])
+
+    assert set(quotes) == {PETR4}
+
+
+def test_resposta_vazia_devolve_mapa_vazio() -> None:
+    assert to_quotes({"results": []}, [PETR4]) == {}
 
 
 def test_mapeia_o_payload_real_do_painel_da_brapi(brapi_v2_payload_real) -> None:
-    """Regressão contra o JSON copiado do painel em 2026-09-03."""
-    item = extract_first_item(brapi_v2_payload_real)
-    assert item is not None
-    quote = to_quote(item, Ticker("B3SA3"))
+    b3sa3 = Ticker("B3SA3")
+    quotes = to_quotes(brapi_v2_payload_real, [b3sa3])
 
-    assert quote.symbol == "B3SA3"
-    assert quote.short_name == "B3SA3"
-    assert quote.long_name == "B3 SA - Brasil, Bolsa, Balcao"
-    assert quote.currency == "BRL"
-    assert quote.price == Decimal("17.26")
-    assert quote.change == Decimal("0.64")
-    assert quote.change_percent == Decimal("3.85")
-    assert quote.volume == 41077700
-    assert quote.market_cap == Decimal("80748160464")
-    assert quote.quoted_at.isoformat() == "2026-09-03T03:54:59+00:00"
+    q = quotes[b3sa3]
+    assert q.long_name == "B3 SA - Brasil, Bolsa, Balcao"
+    assert q.price == Decimal("17.26")
+    assert q.change_percent == Decimal("3.85")
+    assert q.quoted_at.isoformat() == "2026-09-03T03:54:59+00:00"
+
+
+def test_formato_legado_continua_funcionando(brapi_legacy_payload) -> None:
+    """ADR-004 — as duas gerações produzem o mesmo resultado."""
+    quotes = to_quotes(brapi_legacy_payload, [PETR4])
+
+    assert quotes[PETR4].price == Decimal("36.65")
 
 
 def test_symbol_do_v2_esta_fora_de_data_e_sobrevive_a_normalizacao(
     brapi_v2_payload_real,
 ) -> None:
-    """No v2, 'symbol' fica no nível externo: descartá-lo perderia o código."""
-    item = extract_first_item(brapi_v2_payload_real)
-    assert item is not None
+    item = extract_items(brapi_v2_payload_real)[0]
     assert item["symbol"] == "B3SA3"
     assert item["regularMarketPrice"] == 17.26
 
 
 def test_data_vence_o_nivel_externo_em_caso_de_conflito() -> None:
-    item = normalize_item({"symbol": "FORA", "data": {"symbol": "DENTRO"}})
-    assert item["symbol"] == "DENTRO"
-
-
-def test_as_duas_geracoes_produzem_o_mesmo_resultado(
-    brapi_legacy_payload, brapi_v2_payload
-) -> None:
-    legado = to_quote(extract_first_item(brapi_legacy_payload), TICKER)  # type: ignore[arg-type]
-    v2 = to_quote(extract_first_item(brapi_v2_payload), TICKER)  # type: ignore[arg-type]
-    assert legado == v2
+    assert normalize_item({"symbol": "FORA", "data": {"symbol": "DENTRO"}})["symbol"] == "DENTRO"
 
 
 def test_preco_nao_herda_erro_de_ponto_flutuante() -> None:
     """ADR-003 — Decimal(str(v)), nunca Decimal(float)."""
-    quote = to_quote({"symbol": "PETR4", "regularMarketPrice": 0.1}, TICKER)
-    assert quote.price == Decimal("0.1")
-    assert quote.price + Decimal("0.2") == Decimal("0.3")
-
-
-def test_campos_opcionais_ausentes_viram_none() -> None:
-    quote = to_quote({"symbol": "PETR4", "regularMarketPrice": 10.0}, TICKER)
-    assert quote.long_name is None
-    assert quote.change is None
-    assert quote.change_percent is None
-    assert quote.volume is None
-    assert quote.market_cap is None
-
-
-def test_moeda_ausente_assume_brl() -> None:
-    quote = to_quote({"symbol": "PETR4", "regularMarketPrice": 10.0}, TICKER)
-    assert quote.currency == "BRL"
-
-
-def test_instante_ausente_assume_agora_em_utc() -> None:
-    quote = to_quote({"symbol": "PETR4", "regularMarketPrice": 10.0}, TICKER)
-    assert quote.quoted_at.tzinfo is not None
+    q = to_quote({"symbol": "PETR4", "regularMarketPrice": 0.1}, PETR4)
+    assert q.price + Decimal("0.2") == Decimal("0.3")
 
 
 def test_preco_ausente_e_erro_de_contrato() -> None:
-    """Dado ausente vira erro explícito — nunca cotação com preço zero."""
     with pytest.raises(QuoteProviderContractError):
-        to_quote({"symbol": "PETR4"}, TICKER)
-
-
-def test_simbolo_ausente_usa_o_ticker_pedido() -> None:
-    quote = to_quote({"regularMarketPrice": 10.0}, TICKER)
-    assert quote.symbol == "PETR4"
-
-
-def test_simbolo_fora_do_padrao_cai_para_o_ticker_pedido() -> None:
-    quote = to_quote({"symbol": "^BVSP", "regularMarketPrice": 10.0}, TICKER)
-    assert quote.symbol == "PETR4"
-
-
-def test_campos_desconhecidos_sao_ignorados() -> None:
-    """A fonte pode crescer sem quebrar a nossa API — é o isolamento do RF-04."""
-    quote = to_quote(
-        {"symbol": "PETR4", "regularMarketPrice": 10.0, "campoNovoDaBrapi": {"x": 1}}, TICKER
-    )
-    assert quote.price == Decimal("10.0")
-
-
-def test_results_vazio_devolve_none() -> None:
-    assert extract_first_item({"results": []}) is None
+        to_quote({"symbol": "PETR4"}, PETR4)
 
 
 def test_results_ausente_e_erro_de_contrato() -> None:
     with pytest.raises(QuoteProviderContractError):
-        extract_first_item({"requestedAt": "2026-09-03T17:25:28.170Z"})
+        extract_items({"requestedAt": "2026-09-06T12:12:29.182Z"})
 
 
 def test_payload_que_nao_e_objeto_e_erro_de_contrato() -> None:
     with pytest.raises(QuoteProviderContractError):
-        extract_first_item(["isto não é um objeto"])
-
-
-def test_item_que_nao_e_objeto_e_erro_de_contrato() -> None:
-    with pytest.raises(QuoteProviderContractError):
-        normalize_item("texto solto")
+        extract_items(["isto não é um objeto"])

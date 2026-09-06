@@ -20,19 +20,27 @@ def test_indice_identifica_o_servico(client) -> None:
 
 
 def test_indice_traz_url_de_exemplo_pronta_para_colar(client) -> None:
-    """CA-03.2 — quem abriu a raiz descobre sozinho como consultar."""
+    """US3-3 — quem abriu a raiz descobre sozinho como consultar."""
     corpo = client.get("/").json()
 
-    assert corpo["exemplo"].endswith("/cotacao/PETR4")
+    assert corpo["exemplo"].endswith("/ticker/PETR4")
     assert corpo["exemplo"].startswith("http")
 
 
-def test_indice_lista_as_rotas(client) -> None:
+def test_indice_anuncia_as_duas_rotas_novas(client) -> None:
+    """US3-3 — e não a antiga."""
     rotas = client.get("/").json()["rotas"]
 
-    assert rotas["cotacao"] == "/cotacao/{ticker}"
+    assert rotas["ticker"] == "/ticker/{ticker}"
+    assert rotas["tickers"].startswith("/ticker?ticker=")
     assert rotas["saude"] == "/health"
     assert rotas["openapi"] == "/openapi.json"
+    assert "cotacao" not in rotas
+
+
+def test_indice_traz_a_versao_dois(client) -> None:
+    """A quebra de contrato do FR-017 é visível na versão."""
+    assert client.get("/").json()["versao"].startswith("2.")
 
 
 def test_a_raiz_nao_redireciona(client) -> None:

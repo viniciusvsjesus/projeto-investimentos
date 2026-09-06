@@ -33,34 +33,21 @@ cp .env.example .env      # e coloque seu token da BRAPI no arquivo
 docker compose up -d
 ```
 
-Abra <http://localhost:8000/cotacao/PETR4> no navegador. O JSON aparece direto —
+Abra <http://localhost:8000/ticker/PETR4> no navegador. O JSON aparece direto —
 sem tela, sem botão.
 
 A raiz <http://localhost:8000> devolve um índice, também em JSON, com o estado do
-serviço e a URL de exemplo:
-
-```json
-{
-  "servico": "Projeto Investimentos API",
-  "versao": "1.0.0",
-  "status": "ok",
-  "exemplo": "http://localhost:8000/cotacao/PETR4",
-  "rotas": {
-    "cotacao": "/cotacao/{ticker}",
-    "saude": "/health",
-    "openapi": "/openapi.json",
-    "documentacao": "/docs"
-  }
-}
-```
+serviço e a URL de exemplo.
 
 Sem token o serviço sobe do mesmo jeito, mas só os tickers de sandbox
 (`PETR4`, `VALE3`, `MGLU3`, `ITUB4`) respondem.
 
 ## Usar
 
+### Um ativo
+
 ```bash
-curl http://localhost:8000/cotacao/PETR4
+curl http://localhost:8000/ticker/PETR4
 ```
 
 ```json
@@ -74,17 +61,55 @@ curl http://localhost:8000/cotacao/PETR4
   "changePercent": -0.95,
   "volume": 27681100,
   "marketCap": 483937892568,
-  "quotedAt": "2026-09-03T17:24:54Z",
+  "quotedAt": "2026-09-06T17:24:54Z",
   "source": "brapi",
   "cached": false
 }
 ```
 
+### Vários ativos
+
+Repita o parâmetro `ticker`. A resposta é **sempre uma lista**, mesmo com um
+elemento só, e vem na ordem em que os ativos foram pedidos.
+
+```bash
+curl "http://localhost:8000/ticker?ticker=ITSA4&ticker=PETR4"
+```
+
+```json
+[
+  { "ticker": "ITSA4", "status": "found",    "quote": { "price": 11.42, "cached": true,  "...": "..." } },
+  { "ticker": "PETR4", "status": "found",    "quote": { "price": 36.65, "cached": false, "...": "..." } }
+]
+```
+
+Um código que a bolsa não conhece volta na lista marcado, sem derrubar os outros:
+
+```json
+[
+  { "ticker": "PETR4", "status": "found",    "quote": { "...": "..." } },
+  { "ticker": "ZZZZ9", "status": "notFound", "quote": null }
+]
+```
+
+Já um código **mal formado** derruba a requisição inteira com `400`, antes de
+gastar qualquer chamada à BRAPI. Erro de quem chamou não é resultado de busca.
+
+### A economia de cota
+
+Cada ativo é procurado no cache **individualmente**. Só os ausentes vão à fonte,
+e numa **única** chamada. Se você pedir três ativos e dois já estiverem em
+cache, a BRAPI recebe uma requisição com um código só — e o campo `cached` de
+cada item mostra de onde cada cotação veio, sem precisar olhar log.
+
+Se todos estiverem em cache, a BRAPI não é chamada nenhuma vez.
+
 ### Rotas
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/cotacao/{ticker}` | **Cotação atual de um ativo** |
+| `GET` | `/ticker/{ticker}` | **Um ativo** — devolve um objeto; `404` se não existir |
+| `GET` | `/ticker?ticker=A&ticker=B` | **Vários ativos** — devolve uma lista |
 | `GET` | `/` | Índice do serviço, em JSON |
 | `GET` | `/health` | Saúde do serviço e do cache |
 | `GET` | `/openapi.json` | Especificação OpenAPI |
@@ -93,6 +118,9 @@ curl http://localhost:8000/cotacao/PETR4
 Códigos aceitos seguem o padrão da B3: quatro caracteres começando por letra,
 mais um ou dois dígitos, com `F` opcional. Aceita minúsculas.
 Exemplos: `PETR4`, `B3SA3`, `BOVA11`, `MXRF11`, `AAPL34`, `petr4f`.
+
+O limite padrão é de **3 ativos por requisição** — o teto assumido do plano
+gratuito da BRAPI. Ajustável em `MAX_TICKERS_PER_REQUEST`.
 
 ### Erros
 
@@ -104,16 +132,16 @@ Toda falha usa o mesmo corpo, no estilo RFC 9457:
   "title": "Código de ativo inválido",
   "status": 400,
   "detail": "O código 'PETR' não segue o padrão da B3: ...",
-  "instance": "/cotacao/PETR"
+  "instance": "/ticker/PETR"
 }
 ```
 
 | Status | Quando |
 |---|---|
-| `400` | Código de ativo fora do padrão da B3 — quatro caracteres começando por letra, mais um ou dois dígitos (rejeitado antes de chamar a BRAPI) |
+| `400` | Código fora do padrão da B3, nenhum código informado, ou mais ativos que o limite (rejeitado antes de chamar a BRAPI) |
 | `404` | Ativo não encontrado |
 | `502` | Falha de comunicação, credencial rejeitada ou resposta inesperada da fonte |
-| `503` | Cota da BRAPI esgotada |
+| `503` | Cota da BRAPI esgotada — o header `Retry-After` da fonte é repassado |
 | `504` | A BRAPI excedeu o tempo limite |
 
 ---
@@ -152,7 +180,7 @@ retorno `float | None`, e qualquer gerador de cliente produziria um
 Depois do `docker compose up -d`, abra no Chrome:
 
 ```
-http://localhost:8000/cotacao/PETR4
+http://localhost:8000/ticker/PETR4
 ```
 
 O JSON tem que trazer `"source": "brapi"` e um `quotedAt` recente. Se vier
@@ -208,7 +236,8 @@ Todas as variáveis vêm do ambiente, com padrão sensato. Ver `.env.example`.
 | `BRAPI_QUOTE_PATH` | `/api/v2/stocks/quote?symbols={ticker}` | Endpoint de cotação. v2 é o ativo; o legado `/api/quote/{ticker}` continua suportado (ADR-004) |
 | `BRAPI_TIMEOUT_SECONDS` | `8.0` | Tempo limite da chamada externa |
 | `REDIS_URL` | `redis://redis:6379/0` | Cache. Vazio desliga o cache. |
-| `CACHE_TTL_SECONDS` | `60` | Validade da cotação em cache |
+| `CACHE_TTL_SECONDS` | `60` | Validade da cotação em cache, por ativo |
+| `MAX_TICKERS_PER_REQUEST` | `3` | Ativos por requisição em `/ticker`. Subir acima do teto do seu plano exige implementar o fatiamento do lote antes — ver o Complexity Tracking da Spec 002 |
 | `APP_ENV` | `development` | `development` usa log legível; qualquer outro valor usa JSON |
 | `LOG_LEVEL` | `INFO` | Nível de log |
 | `API_PORT` | `8000` | Porta exposta no host |
@@ -371,14 +400,14 @@ reprovava `B3SA3` — um código legítimo da própria B3 — e foi um teste que
 isso; e o `symbol` do endpoint v2 fica fora de `data`, detalhe que só apareceu
 quando o payload real entrou como fixture.
 
-## Escopo do MVP
+## Escopo
 
-Nesta entrega: **uma rota**, cotação de **um** ativo.
+**Spec 001** entregou a cotação de um ativo. **Spec 002** acrescentou a consulta
+de vários numa chamada, com o cache consultado ativo a ativo para poupar cota.
 
-Deliberadamente fora, e registrado em `spec.md` §3: consulta de vários ativos,
-histórico, dividendos, fundamentalistas, FIIs, cripto, autenticação da nossa
-API, banco de dados e cálculo de carteira. Cada um é candidato a uma spec
-própria — nenhum é "já que estamos aqui".
+Deliberadamente fora até aqui: histórico, dividendos, fundamentalistas, FIIs,
+cripto, autenticação da nossa API, banco de dados e cálculo de carteira. Cada um
+é candidato a uma spec própria — nenhum é "já que estamos aqui".
 
 ## Licença
 

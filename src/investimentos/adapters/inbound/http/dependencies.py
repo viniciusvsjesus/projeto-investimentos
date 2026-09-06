@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from investimentos.application.ports.quote_cache import QuoteCachePort
-from investimentos.application.usecases.get_quote import GetQuoteUseCase
+from investimentos.application.usecases.get_quote import GetQuotesUseCase
 from investimentos.config.container import Container
 
 
@@ -18,8 +18,8 @@ def get_container(request: Request) -> Container:
     return container
 
 
-def get_quote_use_case(request: Request) -> GetQuoteUseCase:
-    return get_container(request).get_quote_use_case
+def get_quotes_use_case(request: Request) -> GetQuotesUseCase:
+    return get_container(request).get_quotes_use_case
 
 
 def get_cache(request: Request) -> QuoteCachePort:

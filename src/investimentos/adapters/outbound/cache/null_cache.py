@@ -10,6 +10,8 @@ levanta exceção, nunca quebra o chamador.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
+
 from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
 
@@ -17,10 +19,10 @@ from investimentos.domain.model.ticker import Ticker
 class NullQuoteCache:
     """Cache que não guarda nada."""
 
-    async def get(self, ticker: Ticker) -> Quote | None:
-        return None
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+        return {}
 
-    async def set(self, ticker: Ticker, quote: Quote) -> None:
+    async def set_many(self, quotes: Iterable[Quote]) -> None:
         return None
 
     async def ping(self) -> bool:

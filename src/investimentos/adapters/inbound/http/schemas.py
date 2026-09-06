@@ -13,7 +13,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from pydantic.alias_generators import to_camel
 
-from investimentos.application.usecases.get_quote import QuoteResult
+from investimentos.application.usecases.get_quote import QuoteLookup, QuoteResolution
 
 
 class CamelModel(BaseModel):
@@ -77,8 +77,9 @@ class QuoteResponse(CamelModel):
         return None if valor is None else float(valor)
 
     @classmethod
-    def from_result(cls, result: QuoteResult, source: str) -> QuoteResponse:
-        q = result.quote
+    def from_resolution(cls, resolution: QuoteResolution, source: str) -> QuoteResponse:
+        q = resolution.quote
+        assert q is not None, "from_resolution exige uma resolução com cotação"
         return cls(
             ticker=q.ticker.value,
             short_name=q.short_name,
@@ -91,14 +92,44 @@ class QuoteResponse(CamelModel):
             market_cap=q.market_cap,
             quoted_at=q.quoted_at,
             source=source,
-            cached=result.cached,
+            cached=resolution.cached,
         )
+
+
+class TickerLookupItem(CamelModel):
+    """Um ativo pedido e o que aconteceu com ele.
+
+    A cotação vem **envelopada**, não achatada. Um ativo não encontrado não tem
+    preço, e `price` é obrigatório e não anulável no nosso contrato — achatar
+    obrigaria a torná-lo opcional de novo, exatamente o defeito que a Spec 001
+    corrigiu. O envelope reaproveita `QuoteResponse` sem nenhuma alteração.
+    """
+
+    ticker: str = Field(examples=["PETR4"])
+    status: str = Field(examples=["found"], description="found | notFound")
+    quote: QuoteResponse | None = Field(default=None)
+
+    @classmethod
+    def from_resolution(cls, resolution: QuoteResolution, source: str) -> TickerLookupItem:
+        if not resolution.found:
+            return cls(ticker=resolution.ticker.value, status="notFound", quote=None)
+        return cls(
+            ticker=resolution.ticker.value,
+            status="found",
+            quote=QuoteResponse.from_resolution(resolution, source=source),
+        )
+
+    @staticmethod
+    def from_lookup(lookup: QuoteLookup, source: str) -> list[TickerLookupItem]:
+        """Monta a lista na ordem em que os ativos foram pedidos (FR-016)."""
+        return [TickerLookupItem.from_resolution(r, source) for r in lookup.resolutions]
 
 
 class RotasDisponiveis(CamelModel):
     """As URLs que o serviço expõe, para quem abriu a raiz sem saber o caminho."""
 
-    cotacao: str = Field(default="/cotacao/{ticker}")
+    ticker: str = Field(default="/ticker/{ticker}")
+    tickers: str = Field(default="/ticker?ticker=ITSA4&ticker=PETR4")
     saude: str = Field(default="/health")
     openapi: str = Field(default="/openapi.json")
     documentacao: str = Field(default="/docs")
@@ -112,7 +143,7 @@ class IndexResponse(CamelModel):
     status: str = Field(examples=["ok"])
     exemplo: str = Field(
         description="URL pronta para copiar e colar no navegador.",
-        examples=["http://localhost:8000/cotacao/PETR4"],
+        examples=["http://localhost:8000/ticker/PETR4"],
     )
     rotas: RotasDisponiveis
 

@@ -1,16 +1,23 @@
-"""T070 — Contract test: bate na BRAPI de verdade.
+"""T047 — Contract test: bate na BRAPI de verdade.
 
-Opt-in por decisão da clarificação Q6:
+Opt-in por decisão da clarificação Q6 da Spec 001:
 
     pytest -m contract
 
 Fora do CI porque consome cota do token e depende de rede. É, no entanto, a
-**única** prova de que o nosso mapper corresponde ao que a BRAPI devolve hoje —
-especialmente relevante porque a documentação pública apresenta duas gerações de
-resposta (ADR-004) e não foi possível confirmar qual está ativa.
+única prova de que o nosso mapper corresponde ao que a BRAPI devolve hoje.
+
+Na Spec 002 ele ganhou duas responsabilidades novas, registradas como itens em
+aberto no checklist de requisitos:
+
+- **CHK024** — qual o teto real de ativos por chamada no plano gratuito. A
+  documentação publica 10 no Startup e 20 no Pro, mas não o do gratuito.
+- **CHK025** — o que a fonte faz quando um código do lote não existe. A spec
+  assume que ela omite o ausente de `results`; se em vez disso o lote inteiro
+  falhar, o FR-011 precisa mudar.
 
 Se este teste falhar, quem está errado é
-``specs/001-cotacao-ticker/contracts/brapi-quote.md``, não a BRAPI.
+``specs/002-multiplos-tickers/contracts/brapi-quote.md`` — não a BRAPI.
 """
 
 from __future__ import annotations
@@ -21,8 +28,7 @@ import httpx
 import pytest
 
 from investimentos.adapters.outbound.brapi.client import BrapiQuoteProvider
-from investimentos.adapters.outbound.brapi.mapper import extract_first_item, to_quote
-from investimentos.domain.exceptions import QuoteNotFoundError
+from investimentos.adapters.outbound.brapi.mapper import extract_items, to_quotes
 from investimentos.domain.model.ticker import Ticker
 
 pytestmark = pytest.mark.contract
@@ -32,8 +38,8 @@ QUOTE_PATH = os.getenv("BRAPI_QUOTE_PATH", "/api/v2/stocks/quote?symbols={ticker
 TOKEN = os.getenv("BRAPI_TOKEN")
 
 # Tickers de sandbox: respondem mesmo sem token.
-TICKER = Ticker("PETR4")
-TICKER_INEXISTENTE = Ticker("ZZZZ9")
+PETR4, VALE3, ITUB4 = Ticker("PETR4"), Ticker("VALE3"), Ticker("ITUB4")
+INEXISTENTE = Ticker("ZZZZ9")
 
 
 @pytest.fixture
@@ -42,52 +48,66 @@ async def provider():
         yield BrapiQuoteProvider(client=client, quote_path=QUOTE_PATH, token=TOKEN)
 
 
-@pytest.fixture
-async def payload_real():
+async def _get(codigos: str) -> httpx.Response:
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=15.0) as client:
         headers = {"Accept": "application/json"}
         if TOKEN:
             headers["Authorization"] = f"Bearer {TOKEN}"
-        resposta = await client.get(QUOTE_PATH.format(ticker=TICKER.value), headers=headers)
-        resposta.raise_for_status()
-        return resposta.json()
+        return await client.get(QUOTE_PATH.format(ticker=codigos), headers=headers)
 
 
-async def test_endpoint_responde_200(payload_real) -> None:
-    assert isinstance(payload_real, dict)
+async def test_um_ativo_responde_200() -> None:
+    resposta = await _get("PETR4")
+    assert resposta.status_code == 200
 
 
-async def test_payload_traz_results_como_lista_nao_vazia(payload_real) -> None:
-    assert isinstance(payload_real.get("results"), list)
-    assert payload_real["results"], "a fonte devolveu results vazio para um ticker de sandbox"
-
-
-async def test_item_traz_os_campos_obrigatorios(payload_real) -> None:
+async def test_item_traz_os_campos_obrigatorios() -> None:
     """Os dois campos sem os quais não existe cotação."""
-    item = extract_first_item(payload_real)
-    assert item is not None
-    assert "symbol" in item, f"campos recebidos: {sorted(item)}"
-    assert "regularMarketPrice" in item, f"campos recebidos: {sorted(item)}"
+    itens = extract_items((await _get("PETR4")).json())
+    assert itens, "a fonte devolveu results vazio para um ticker de sandbox"
+    assert "symbol" in itens[0], f"campos recebidos: {sorted(itens[0])}"
+    assert "regularMarketPrice" in itens[0], f"campos recebidos: {sorted(itens[0])}"
 
 
-async def test_mapper_produz_quote_valido_a_partir_do_payload_real(payload_real) -> None:
-    """A prova final: o nosso mapper entende a resposta que a BRAPI dá hoje."""
-    item = extract_first_item(payload_real)
-    assert item is not None
-    quote = to_quote(item, TICKER)
+async def test_varios_ativos_numa_chamada_so() -> None:
+    """ADR-009 — a premissa em que toda a economia de cota se apoia."""
+    resposta = await _get("PETR4,VALE3,ITUB4")
+    assert resposta.status_code == 200
 
-    assert quote.symbol == "PETR4"
-    assert quote.price > 0
-    assert quote.currency == "BRL"
-    assert quote.quoted_at.tzinfo is not None
-
-
-async def test_fluxo_completo_do_provider(provider) -> None:
-    quote = await provider.fetch(TICKER)
-    assert quote.symbol == "PETR4"
-    assert quote.price > 0
+    quotes = to_quotes(resposta.json(), [PETR4, VALE3, ITUB4])
+    assert set(quotes) == {PETR4, VALE3, ITUB4}, (
+        f"a fonte devolveu {sorted(t.value for t in quotes)} — "
+        "se vier menos que os três, o lote não está sendo atendido numa chamada"
+    )
 
 
-async def test_ticker_inexistente_vira_nao_encontrado(provider) -> None:
-    with pytest.raises(QuoteNotFoundError):
-        await provider.fetch(TICKER_INEXISTENTE)
+async def test_mapper_produz_quotes_validas_do_payload_real() -> None:
+    quotes = to_quotes((await _get("PETR4,VALE3")).json(), [PETR4, VALE3])
+    for ticker, quote in quotes.items():
+        assert quote.symbol == ticker.value
+        assert quote.price > 0
+        assert quote.quoted_at.tzinfo is not None
+
+
+async def test_teto_de_ativos_por_chamada_do_plano(provider) -> None:
+    """CHK024 — descobre, sem adivinhar, quantos ativos o plano aceita.
+
+    Não falha se o teto for menor que o pedido: apenas registra quantos vieram,
+    para que o número entre na spec como fato e não como aposta.
+    """
+    pedidos = [PETR4, VALE3, ITUB4]
+    quotes = await provider.fetch_many(pedidos)
+
+    print(f"\n[CHK024] pedidos={len(pedidos)} atendidos={len(quotes)}")
+    assert quotes, "nenhum ativo veio — o plano pode não aceitar consulta múltipla"
+
+
+async def test_codigo_inexistente_no_lote_nao_derruba_os_outros(provider) -> None:
+    """CHK025 — a premissa do FR-011 confrontada com a realidade."""
+    quotes = await provider.fetch_many([PETR4, INEXISTENTE])
+
+    assert PETR4 in quotes, (
+        "a fonte não atendeu PETR4 quando ZZZZ9 estava no mesmo lote — "
+        "o FR-011 precisa ser revisto"
+    )
+    assert INEXISTENTE not in quotes

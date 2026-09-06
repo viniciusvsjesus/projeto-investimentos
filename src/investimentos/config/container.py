@@ -17,7 +17,7 @@ from investimentos.adapters.outbound.cache.null_cache import NullQuoteCache
 from investimentos.adapters.outbound.cache.redis_cache import RedisQuoteCache
 from investimentos.application.ports.quote_cache import QuoteCachePort
 from investimentos.application.ports.quote_provider import QuoteProviderPort
-from investimentos.application.usecases.get_quote import GetQuoteUseCase
+from investimentos.application.usecases.get_quote import GetQuotesUseCase
 from investimentos.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class Container:
         self._redis: Redis | None = None
         self._cache: QuoteCachePort | None = None
         self._provider: QuoteProviderPort | None = None
-        self._use_case: GetQuoteUseCase | None = None
+        self._use_case: GetQuotesUseCase | None = None
 
     async def startup(self) -> None:
         s = self.settings
@@ -66,7 +66,11 @@ class Container:
             logger.info("Cache desabilitado: REDIS_URL não configurada")
 
         self._cache = cache
-        self._use_case = GetQuoteUseCase(provider=self._provider, cache=cache)
+        self._use_case = GetQuotesUseCase(
+            provider=self._provider,
+            cache=cache,
+            max_tickers=s.max_tickers_per_request,
+        )
 
     async def shutdown(self) -> None:
         if self._http_client is not None:
@@ -80,7 +84,7 @@ class Container:
             self._redis = None
 
     @property
-    def get_quote_use_case(self) -> GetQuoteUseCase:
+    def get_quotes_use_case(self) -> GetQuotesUseCase:
         if self._use_case is None:
             raise RuntimeError("Container não inicializado: chame startup() primeiro.")
         return self._use_case

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Protocol
 
 from investimentos.domain.model.quote import Quote
@@ -12,17 +13,27 @@ class QuoteCachePort(Protocol):
     """Contrato de armazenamento temporário de cotações.
 
     Contrato de robustez (LSP, Artigo III): **nenhum** método desta porta pode
-    levantar exceção por falha de infraestrutura. Cache fora do ar é um `miss`,
-    nunca um erro — é o que permite ao caso de uso não ter um único
-    ``try/except`` de infraestrutura e atende ao RF-06.
+    levantar exceção por falha de infraestrutura. Cache fora do ar devolve
+    resultado vazio, nunca erro — é o que permite ao caso de uso não ter um
+    único ``try/except`` de infraestrutura e atende ao FR-014.
+
+    ADR-010 e ADR-011: as operações são em lote. Consultar o cache uma vez por
+    ativo transformaria a economia de chamadas externas em várias idas ao
+    Redis — trocaria um gargalo por outro.
     """
 
-    async def get(self, ticker: Ticker) -> Quote | None:
-        """Devolve a cotação em cache, ou ``None`` em miss ou indisponibilidade."""
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+        """Devolve as cotações em cache. Ausentes simplesmente não vêm no mapa.
+
+        Indisponibilidade do cache devolve mapa vazio: todos viram faltantes.
+        """
         ...
 
-    async def set(self, ticker: Ticker, quote: Quote) -> None:
-        """Grava a cotação. Falha de gravação é silenciosa por contrato."""
+    async def set_many(self, quotes: Iterable[Quote]) -> None:
+        """Grava as cotações, cada uma com validade própria.
+
+        Falha de gravação é silenciosa por contrato.
+        """
         ...
 
     async def ping(self) -> bool:

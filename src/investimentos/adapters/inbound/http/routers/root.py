@@ -1,8 +1,8 @@
 """Raiz do serviço (RF-08).
 
 Abrir ``http://localhost:8000`` no navegador devolve um índice em JSON: o que é
-o serviço, se está no ar e qual URL usar para consultar uma cotação. Sem tela,
-sem botão — só JSON, que é o que uma API deve devolver.
+o serviço, se está no ar e qual URL usar. Sem tela, sem botão — só JSON, que é o
+que uma API deve devolver.
 """
 
 from __future__ import annotations
@@ -27,10 +27,11 @@ async def index(
     container: Container = Depends(get_container),
 ) -> IndexResponse:
     settings = container.settings
+    base = str(request.base_url).rstrip("/")
     return IndexResponse(
         servico=settings.app_name,
         versao=settings.app_version,
         status="ok",
-        exemplo=str(request.base_url).rstrip("/") + "/cotacao/PETR4",
+        exemplo=f"{base}/ticker/PETR4",
         rotas=RotasDisponiveis(),
     )

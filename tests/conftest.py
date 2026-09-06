@@ -2,11 +2,12 @@
 
 Nenhum teste desta suíte (fora de ``tests/contract/``) toca a rede: a BRAPI é
 interceptada pelo ``respx`` e o cache é um dublê em memória. Isso atende ao
-RNF-06 — a suíte roda offline e no CI.
+SC-007 — a suíte roda offline e no CI.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -20,39 +21,43 @@ from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
 
 BRAPI_BASE_URL = "https://brapi.test"
+QUOTE_PATH = "/api/v2/stocks/quote?symbols={ticker}"
+QUOTE_URL = f"{BRAPI_BASE_URL}/api/v2/stocks/quote"
 
 
 class InMemoryQuoteCache:
     """Dublê de ``QuoteCachePort`` que guarda tudo em um dicionário.
 
-    Existe para tornar o RF-05 verificável sem subir Redis. Respeita o contrato
-    de robustez da porta: nunca levanta exceção.
+    Existe para tornar a economia de cota verificável sem subir Redis. Respeita
+    o contrato de robustez da porta: nunca levanta exceção.
     """
 
     def __init__(self) -> None:
-        self.store: dict[str, Quote] = {}
-        self.get_calls = 0
-        self.set_calls = 0
+        self.store: dict[Ticker, Quote] = {}
+        self.get_calls: list[tuple[Ticker, ...]] = []
+        self.set_calls: list[tuple[Ticker, ...]] = []
 
-    async def get(self, ticker: Ticker) -> Quote | None:
-        self.get_calls += 1
-        return self.store.get(ticker.value)
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+        self.get_calls.append(tuple(tickers))
+        return {t: self.store[t] for t in tickers if t in self.store}
 
-    async def set(self, ticker: Ticker, quote: Quote) -> None:
-        self.set_calls += 1
-        self.store[ticker.value] = quote
+    async def set_many(self, quotes: Iterable[Quote]) -> None:
+        lista = list(quotes)
+        self.set_calls.append(tuple(q.ticker for q in lista))
+        for q in lista:
+            self.store[q.ticker] = q
 
     async def ping(self) -> bool:
         return True
 
 
 class BrokenQuoteCache:
-    """Cache que falhou. Devolve miss e engole a gravação, como manda a porta."""
+    """Cache que falhou. Devolve vazio e engole a gravação, como manda a porta."""
 
-    async def get(self, ticker: Ticker) -> Quote | None:
-        return None
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+        return {}
 
-    async def set(self, ticker: Ticker, quote: Quote) -> None:
+    async def set_many(self, quotes: Iterable[Quote]) -> None:
         return None
 
     async def ping(self) -> bool:
@@ -60,40 +65,94 @@ class BrokenQuoteCache:
 
 
 class StubQuoteProvider:
-    """Fonte de cotações controlada pelo teste."""
+    """Fonte de cotações controlada pelo teste.
 
-    def __init__(self, quote: Quote | None = None, error: Exception | None = None) -> None:
-        self._quote = quote
+    Guarda cada chamada para que o teste possa afirmar **quantas** vezes a fonte
+    foi consultada e **com quais** ativos — que é o que os SC-001 a SC-004 pedem.
+    """
+
+    def __init__(
+        self,
+        quotes: Iterable[Quote] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self._quotes = {q.ticker: q for q in quotes}
         self._error = error
-        self.calls = 0
+        self.calls: list[tuple[Ticker, ...]] = []
 
-    async def fetch(self, ticker: Ticker) -> Quote:
-        self.calls += 1
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
+
+    async def fetch_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+        self.calls.append(tuple(tickers))
         if self._error is not None:
             raise self._error
-        assert self._quote is not None
-        return self._quote
+        return {t: self._quotes[t] for t in tickers if t in self._quotes}
 
 
-@pytest.fixture
-def sample_quote() -> Quote:
+def build_quote(
+    codigo: str = "PETR4",
+    price: str = "36.65",
+    short_name: str | None = None,
+    long_name: str | None = "Petroleo Brasileiro SA Petrobras",
+) -> Quote:
     return Quote(
-        ticker=Ticker("PETR4"),
-        short_name="PETR4",
-        long_name="Petroleo Brasileiro SA Petrobras",
+        ticker=Ticker(codigo),
+        short_name=short_name or codigo,
+        long_name=long_name,
         currency="BRL",
-        price=Decimal("36.65"),
+        price=Decimal(price),
         change=Decimal("-0.35"),
         change_percent=Decimal("-0.95"),
         volume=27681100,
         market_cap=Decimal("483937892568"),
-        quoted_at=datetime(2026, 9, 3, 17, 24, 54, tzinfo=timezone.utc),
+        quoted_at=datetime(2026, 9, 6, 17, 24, 54, tzinfo=timezone.utc),
     )
 
 
 @pytest.fixture
+def sample_quote() -> Quote:
+    return build_quote()
+
+
+def _item_v2(codigo: str, price: float = 36.65, long_name: str | None = None) -> dict[str, Any]:
+    """Um item no formato real do v2: symbol fora, dados de mercado sob 'data'."""
+    return {
+        "requestedSymbol": codigo,
+        "symbol": codigo,
+        "changed": False,
+        "data": {
+            "shortName": codigo,
+            "longName": long_name or f"{codigo} SA",
+            "currency": "BRL",
+            "regularMarketPrice": price,
+            "regularMarketChange": -0.35,
+            "regularMarketChangePercent": -0.95,
+            "regularMarketVolume": 27681100,
+            "regularMarketTime": "2026-09-06T17:24:54.000Z",
+            "marketCap": 483937892568,
+        },
+    }
+
+
+@pytest.fixture
+def payload_v2():
+    """Fábrica de payloads do v2 com quantos ativos o teste quiser."""
+
+    def _build(*codigos: str) -> dict[str, Any]:
+        return {
+            "results": [_item_v2(c) for c in codigos],
+            "requestedAt": "2026-09-06T12:12:29.182Z",
+            "took": 1,
+        }
+
+    return _build
+
+
+@pytest.fixture
 def brapi_legacy_payload() -> dict[str, Any]:
-    """Formato legado: campos na raiz do item (ADR-004)."""
+    """Formato legado: todos os campos na raiz do item (ADR-004)."""
     return {
         "results": [
             {
@@ -105,38 +164,25 @@ def brapi_legacy_payload() -> dict[str, Any]:
                 "regularMarketChange": -0.35,
                 "regularMarketChangePercent": -0.95,
                 "regularMarketVolume": 27681100,
-                "regularMarketTime": "2026-09-03T17:24:54.000Z",
+                "regularMarketTime": "2026-09-06T17:24:54.000Z",
                 "marketCap": 483937892568,
             }
         ],
-        "requestedAt": "2026-09-03T17:25:28.170Z",
+        "requestedAt": "2026-09-06T12:12:29.182Z",
     }
 
 
 @pytest.fixture
-def brapi_v2_payload(brapi_legacy_payload: dict[str, Any]) -> dict[str, Any]:
-    """Formato v2, na forma real: 'symbol' fora, dados de mercado sob 'data'."""
-    item = dict(brapi_legacy_payload["results"][0])
-    symbol = item.pop("symbol")
-    return {
-        "results": [
-            {
-                "requestedSymbol": symbol,
-                "symbol": symbol,
-                "changed": False,
-                "data": item,
-            }
-        ],
-        "requestedAt": brapi_legacy_payload["requestedAt"],
-    }
+def brapi_v2_payload(payload_v2) -> dict[str, Any]:
+    return payload_v2("PETR4")
 
 
 @pytest.fixture
 def brapi_v2_payload_real() -> dict[str, Any]:
     """Payload copiado literalmente do painel da BRAPI em 2026-09-03.
 
-    Serve de regressão: se a nossa leitura do contrato quebrar, este teste
-    falha mesmo sem rede e sem token.
+    Regressão: se a nossa leitura do contrato quebrar, este teste falha mesmo
+    sem rede e sem token.
     """
     return {
         "results": [
@@ -179,9 +225,10 @@ def test_settings() -> Settings:
         app_env="test",
         log_level="WARNING",
         brapi_base_url=BRAPI_BASE_URL,
-        brapi_quote_path="/api/v2/stocks/quote?symbols={ticker}",
+        brapi_quote_path=QUOTE_PATH,
         brapi_token="token-de-teste",
         redis_url=None,
+        max_tickers_per_request=3,
     )
 
 
