@@ -22,7 +22,7 @@ import yaml
 CONTRATO = (
     Path(__file__).resolve().parents[2]
     / "specs"
-    / "002-multiplos-tickers"
+    / "003-recurso-acoes-portugues"
     / "contracts"
     / "openapi.yaml"
 )
@@ -61,8 +61,8 @@ def test_todos_os_status_prometidos_estao_documentados(contrato, publicado) -> N
 
 
 def test_schema_de_cotacao_tem_todos_os_campos_do_contrato(contrato, publicado) -> None:
-    esperados = set(contrato["components"]["schemas"]["QuoteResponse"]["properties"])
-    publicados = set(publicado["components"]["schemas"]["QuoteResponse"]["properties"])
+    esperados = set(contrato["components"]["schemas"]["CotacaoResponse"]["properties"])
+    publicados = set(publicado["components"]["schemas"]["CotacaoResponse"]["properties"])
     assert esperados == publicados
 
 
@@ -81,8 +81,8 @@ def test_tipos_dos_campos_da_cotacao_batem(contrato, publicado) -> None:
     serializador tinha retorno `float | None`, e um gerador de cliente
     produziria `Optional<Double>` para um campo que nunca vem nulo.
     """
-    esperado = contrato["components"]["schemas"]["QuoteResponse"]["properties"]
-    publicado_props = publicado["components"]["schemas"]["QuoteResponse"]["properties"]
+    esperado = contrato["components"]["schemas"]["CotacaoResponse"]["properties"]
+    publicado_props = publicado["components"]["schemas"]["CotacaoResponse"]["properties"]
 
     for campo, spec in esperado.items():
         assert _tipos(spec) == _tipos(publicado_props[campo]), (
@@ -92,8 +92,8 @@ def test_tipos_dos_campos_da_cotacao_batem(contrato, publicado) -> None:
 
 
 def test_campos_obrigatorios_da_cotacao_batem(contrato, publicado) -> None:
-    esperados = set(contrato["components"]["schemas"]["QuoteResponse"]["required"])
-    publicados = set(publicado["components"]["schemas"]["QuoteResponse"]["required"])
+    esperados = set(contrato["components"]["schemas"]["CotacaoResponse"]["required"])
+    publicados = set(publicado["components"]["schemas"]["CotacaoResponse"]["required"])
     assert esperados == publicados
 
 
@@ -101,3 +101,9 @@ def test_schema_de_erro_tem_os_campos_do_contrato(contrato, publicado) -> None:
     esperados = set(contrato["components"]["schemas"]["ProblemDetail"]["properties"])
     publicados = set(publicado["components"]["schemas"]["ProblemDetail"]["properties"])
     assert esperados == publicados
+
+
+def test_nenhum_caminho_tem_prefixo_de_versao(publicado) -> None:
+    """FR-014 — versionar por mudança, não por caminho."""
+    for rota in publicado["paths"]:
+        assert not rota.startswith("/v"), f"{rota} tem prefixo de versão"

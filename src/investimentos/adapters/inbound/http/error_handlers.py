@@ -50,10 +50,12 @@ def _problem(
     detail: str | None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    # FR-011: erro nunca é cacheável.
+    cabecalhos = {"Cache-Control": "no-store", **(headers or {})}
     return JSONResponse(
         status_code=status,
         media_type=PROBLEM_CONTENT_TYPE,
-        headers=headers,
+        headers=cabecalhos,
         content={
             "type": f"{_ERROR_BASE}/{slug}",
             "title": title,

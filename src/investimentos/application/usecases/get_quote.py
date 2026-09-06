@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-from investimentos.application.ports.quote_cache import QuoteCachePort
+from investimentos.application.ports.quote_cache import CachedQuote, QuoteCachePort
 from investimentos.application.ports.quote_provider import QuoteProviderPort
 from investimentos.domain.exceptions import InvalidTickerError, TooManyTickersError
 from investimentos.domain.model.quote import Quote
@@ -36,6 +36,12 @@ class QuoteResolution:
     ticker: Ticker
     quote: Quote | None = None
     origin: QuoteOrigin | None = None
+    valid_for: int | None = None
+    """Segundos que esta cotação ainda vale.
+
+    Do cache, é o que o Redis informou de TTL restante. Da fonte, é o TTL cheio
+    — acabou de ser gravada. ``None`` quando não há cotação ou quando o cache
+    está desligado, o que a borda traduz em ``no-store`` (ADR-018)."""
 
     @property
     def found(self) -> bool:
@@ -59,6 +65,17 @@ class QuoteLookup:
     @property
     def not_found(self) -> tuple[QuoteResolution, ...]:
         return tuple(r for r in self.resolutions if not r.found)
+
+    @property
+    def min_valid_for(self) -> int | None:
+        """A menor validade entre as cotações resolvidas.
+
+        ADR-019: o ``Cache-Control`` descreve a **resposta inteira**, não cada
+        item. Anunciar a maior validade faria um proxy servir uma lista cujo
+        primeiro item já venceu. O menor é o único valor que nunca mente.
+        """
+        validades = [r.valid_for for r in self.resolutions if r.valid_for]
+        return min(validades) if validades else None
 
     @property
     def from_cache_count(self) -> int:
@@ -89,10 +106,14 @@ class GetQuotesUseCase:
         provider: QuoteProviderPort,
         cache: QuoteCachePort,
         max_tickers: int = 3,
+        cache_ttl_seconds: int = 0,
     ) -> None:
         self._provider = provider
         self._cache = cache
         self._max_tickers = max_tickers
+        # Validade a anunciar para o que acabou de ser gravado no cache. Zero
+        # quando o cache está desligado — aí não há validade a prometer.
+        self._cache_ttl = cache_ttl_seconds
 
     async def execute(self, tickers: Sequence[Ticker]) -> QuoteLookup:
         pedidos = self._normalize(tickers)
@@ -108,7 +129,9 @@ class GetQuotesUseCase:
                 await self._cache.set_many(da_fonte.values())
 
         lookup = QuoteLookup(
-            resolutions=tuple(self._resolve(t, em_cache, da_fonte) for t in pedidos)
+            resolutions=tuple(
+                self._resolve(t, em_cache, da_fonte, self._cache_ttl) for t in pedidos
+            )
         )
 
         # Artigo IX: quantos ativos esta requisição poupou de cota.
@@ -139,11 +162,18 @@ class GetQuotesUseCase:
     @staticmethod
     def _resolve(
         ticker: Ticker,
-        em_cache: Mapping[Ticker, Quote],
+        em_cache: Mapping[Ticker, CachedQuote],
         da_fonte: Mapping[Ticker, Quote],
+        cache_ttl: int,
     ) -> QuoteResolution:
         if ticker in em_cache:
-            return QuoteResolution(ticker, em_cache[ticker], QuoteOrigin.CACHE)
+            entrada = em_cache[ticker]
+            return QuoteResolution(
+                ticker, entrada.quote, QuoteOrigin.CACHE, entrada.ttl_seconds
+            )
         if ticker in da_fonte:
-            return QuoteResolution(ticker, da_fonte[ticker], QuoteOrigin.SOURCE)
+            # Acabou de ser gravada: vale o TTL cheio, se houver cache.
+            return QuoteResolution(
+                ticker, da_fonte[ticker], QuoteOrigin.SOURCE, cache_ttl or None
+            )
         return QuoteResolution(ticker)

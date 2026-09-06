@@ -1,33 +1,35 @@
 """Rotas de cotação — o adapter de entrada do caso de uso.
 
-    GET /ticker/{ticker}   → um objeto
-    GET /ticker?ticker=…   → uma lista
+    GET /acoes/{ticker}   → um objeto
+    GET /acoes?ticker=…   → uma lista
 
-As duas devolvem JSON puro. Abrir no navegador já mostra o resultado.
+O recurso se chama pelo **dado** que devolve — uma ação —, não pelo
+identificador. É o que elimina a redundância de `/ticker?ticker=` e o que o
+Artigo XI pede.
 
-Artigo XI: item devolve objeto, coleção devolve lista — e continua devolvendo
-lista quando o resultado tem um elemento só. O consumidor nunca precisa checar
-o tipo antes de ler.
+Uma raiz só, no plural, com o item dentro dela: `/acoes` é a coleção e
+`/acoes/ITSA4` é um item daquela coleção (ADR-015).
 """
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 
+from investimentos.adapters.inbound.http.cache_headers import cache_control
 from investimentos.adapters.inbound.http.dependencies import get_quotes_use_case
 from investimentos.adapters.inbound.http.schemas import (
+    AcaoConsultada,
+    CotacaoResponse,
     ProblemDetail,
-    QuoteResponse,
-    TickerLookupItem,
 )
 from investimentos.adapters.outbound.brapi.client import SOURCE_NAME
 from investimentos.application.usecases.get_quote import GetQuotesUseCase
 from investimentos.domain.exceptions import QuoteNotFoundError
 from investimentos.domain.model.ticker import Ticker
 
-router = APIRouter(tags=["ticker"])
+router = APIRouter(tags=["acoes"])
 
 _ERROS_COMUNS: dict[int | str, dict[str, object]] = {
     400: {"model": ProblemDetail, "description": "Código com formato inválido"},
@@ -43,13 +45,14 @@ _DESCRICAO_CODIGO = (
 
 
 @router.get(
-    "/ticker",
-    response_model=list[TickerLookupItem],
-    operation_id="listTickers",
+    "/acoes",
+    response_model=list[AcaoConsultada],
+    operation_id="listAcoes",
     summary="Cotação de vários ativos",
     responses=_ERROS_COMUNS,
 )
-async def list_tickers(
+async def list_acoes(
+    response: Response,
     ticker: Annotated[
         list[str],
         Query(
@@ -62,31 +65,36 @@ async def list_tickers(
         ),
     ],
     use_case: GetQuotesUseCase = Depends(get_quotes_use_case),
-) -> list[TickerLookupItem]:
+) -> list[AcaoConsultada]:
     # A validação é do domínio, não do framework: Ticker() levanta
     # InvalidTickerError e o error handler converte em 400 com o corpo
-    # padronizado, sem gastar chamada externa (FR-002, SC-005). Qualquer código
-    # mal formado derruba a requisição inteira — erro de quem chamou não é
-    # resultado de busca (FR-011).
+    # padronizado, sem gastar chamada externa. Qualquer código mal formado
+    # derruba a requisição inteira — erro de quem chamou não é resultado de busca.
     pedidos = [Ticker(codigo) for codigo in ticker]
     lookup = await use_case.execute(pedidos)
-    return TickerLookupItem.from_lookup(lookup, source=SOURCE_NAME)
+
+    # ADR-019: vence a menor validade. O cabeçalho descreve a resposta inteira,
+    # e ela deixa de servir quando o primeiro item vence.
+    response.headers["Cache-Control"] = cache_control(lookup.min_valid_for)
+
+    return AcaoConsultada.from_lookup(lookup, source=SOURCE_NAME)
 
 
 @router.get(
-    "/ticker/{ticker}",
-    response_model=QuoteResponse,
-    operation_id="getTicker",
+    "/acoes/{ticker}",
+    response_model=CotacaoResponse,
+    operation_id="getAcao",
     summary="Cotação de um ativo",
     responses={
         **_ERROS_COMUNS,
         404: {"model": ProblemDetail, "description": "Ativo não encontrado na fonte"},
     },
 )
-async def get_ticker(
-    ticker: str = Path(description=_DESCRICAO_CODIGO, examples=["PETR4"]),
+async def get_acao(
+    response: Response,
+    ticker: str = Path(description=_DESCRICAO_CODIGO, examples=["ITSA4"]),
     use_case: GetQuotesUseCase = Depends(get_quotes_use_case),
-) -> QuoteResponse:
+) -> CotacaoResponse:
     parsed = Ticker(ticker)
     lookup = await use_case.execute([parsed])
     resolucao = lookup.resolutions[0]
@@ -96,4 +104,5 @@ async def get_ticker(
     if not resolucao.found:
         raise QuoteNotFoundError(parsed.value)
 
-    return QuoteResponse.from_resolution(resolucao, source=SOURCE_NAME)
+    response.headers["Cache-Control"] = cache_control(resolucao.valid_for)
+    return CotacaoResponse.from_resolution(resolucao, source=SOURCE_NAME)

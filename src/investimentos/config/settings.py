@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # --- Aplicação ---
     app_name: str = "Projeto Investimentos API"
-    app_version: str = "2.0.0"
+    app_version: str = "3.0.0"
     app_env: str = "development"
     log_level: str = "INFO"
 

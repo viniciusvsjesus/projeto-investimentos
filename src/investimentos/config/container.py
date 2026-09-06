@@ -70,6 +70,8 @@ class Container:
             provider=self._provider,
             cache=cache,
             max_tickers=s.max_tickers_per_request,
+            # Sem cache não há validade a prometer: zero vira no-store na borda.
+            cache_ttl_seconds=s.cache_ttl_seconds if s.cache_enabled else 0,
         )
 
     async def shutdown(self) -> None:

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from investimentos.adapters.inbound.http.error_handlers import register_error_handlers
-from investimentos.adapters.inbound.http.routers import health, root, ticker
+from investimentos.adapters.inbound.http.routers import acoes, health, root
 from investimentos.config.container import Container
 from investimentos.config.logging import configure_logging
 from investimentos.config.settings import Settings, get_settings
@@ -23,10 +23,12 @@ isolando os consumidores da fonte externa de dados.
 
 Uso:
 
-- `GET /ticker/{ticker}` — um ativo, devolve um objeto.
-  Exemplo: [`/ticker/PETR4`](/ticker/PETR4)
-- `GET /ticker?ticker=A&ticker=B` — vários, devolve uma lista.
-  Exemplo: [`/ticker?ticker=ITSA4&ticker=PETR4`](/ticker?ticker=ITSA4&ticker=PETR4)
+- `GET /acoes/{ticker}` — um ativo, devolve um objeto.
+  Exemplo: [`/acoes/ITSA4`](/acoes/ITSA4)
+- `GET /acoes?ticker=A&ticker=B` — vários, devolve uma lista.
+  Exemplo: [`/acoes?ticker=ITSA4&ticker=PETR4`](/acoes?ticker=ITSA4&ticker=PETR4)
+
+A resposta informa por quanto tempo a cotação ainda vale, no `Cache-Control`.
 
 Cada ativo é procurado no cache individualmente; só os ausentes vão à fonte
 externa, e numa única chamada.
@@ -71,6 +73,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_error_handlers(app)
     app.include_router(root.router)
     app.include_router(health.router)
-    app.include_router(ticker.router)
+    app.include_router(acoes.router)
 
     return app

@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from investimentos.adapters.inbound.http.app import create_app
+from investimentos.application.ports.quote_cache import CachedQuote
 from investimentos.config.settings import Settings
 from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
@@ -32,14 +33,21 @@ class InMemoryQuoteCache:
     o contrato de robustez da porta: nunca levanta exceção.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ttl_seconds: int | None = 60) -> None:
         self.store: dict[Ticker, Quote] = {}
         self.get_calls: list[tuple[Ticker, ...]] = []
         self.set_calls: list[tuple[Ticker, ...]] = []
+        # Validade que este dublê reporta. Por ativo, para testar o "menor vence".
+        self.ttl_seconds = ttl_seconds
+        self.ttl_por_ticker: dict[Ticker, int | None] = {}
 
-    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, CachedQuote]:
         self.get_calls.append(tuple(tickers))
-        return {t: self.store[t] for t in tickers if t in self.store}
+        return {
+            t: CachedQuote(self.store[t], self.ttl_por_ticker.get(t, self.ttl_seconds))
+            for t in tickers
+            if t in self.store
+        }
 
     async def set_many(self, quotes: Iterable[Quote]) -> None:
         lista = list(quotes)
@@ -54,7 +62,7 @@ class InMemoryQuoteCache:
 class BrokenQuoteCache:
     """Cache que falhou. Devolve vazio e engole a gravação, como manda a porta."""
 
-    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, CachedQuote]:
         return {}
 
     async def set_many(self, quotes: Iterable[Quote]) -> None:

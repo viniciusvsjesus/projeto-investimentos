@@ -1,4 +1,4 @@
-"""T012, T013, T024, T035-T038 — GET /ticker: vários ativos, uma lista (US1, US2)."""
+"""T010 e transversais — GET /acoes: vários ativos, uma lista."""
 
 from __future__ import annotations
 
@@ -24,13 +24,13 @@ def test_consulta_tres_ativos(client, payload_v2) -> None:
         return_value=httpx.Response(200, json=payload_v2("ITSA4", "PETR4", "VALE3"))
     )
 
-    resposta = client.get("/ticker?ticker=ITSA4&ticker=PETR4&ticker=VALE3")
+    resposta = client.get("/acoes?ticker=ITSA4&ticker=PETR4&ticker=VALE3")
 
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert isinstance(corpo, list)
     assert [item["ticker"] for item in corpo] == ["ITSA4", "PETR4", "VALE3"]
-    assert all(item["status"] == "found" for item in corpo)
+    assert all(item["situacao"] == "encontrada" for item in corpo)
     assert rota.call_count == 1
 
 
@@ -39,7 +39,7 @@ def test_um_ativo_continua_sendo_lista(client, payload_v2) -> None:
     """US1-2, Artigo XI — coleção não muda de forma por causa da quantidade."""
     _rota("PETR4").mock(return_value=httpx.Response(200, json=payload_v2("PETR4")))
 
-    corpo = client.get("/ticker?ticker=PETR4").json()
+    corpo = client.get("/acoes?ticker=PETR4").json()
 
     assert isinstance(corpo, list)
     assert len(corpo) == 1
@@ -52,7 +52,7 @@ def test_preserva_a_ordem_pedida(client, payload_v2) -> None:
         return_value=httpx.Response(200, json=payload_v2("PETR4", "VALE3"))
     )
 
-    corpo = client.get("/ticker?ticker=VALE3&ticker=PETR4").json()
+    corpo = client.get("/acoes?ticker=VALE3&ticker=PETR4").json()
 
     assert [item["ticker"] for item in corpo] == ["VALE3", "PETR4"]
 
@@ -62,7 +62,7 @@ def test_repeticao_nao_duplica(client, payload_v2) -> None:
     """US1-3."""
     _rota("PETR4").mock(return_value=httpx.Response(200, json=payload_v2("PETR4")))
 
-    corpo = client.get("/ticker?ticker=petr4&ticker=PETR4").json()
+    corpo = client.get("/acoes?ticker=petr4&ticker=PETR4").json()
 
     assert len(corpo) == 1
     assert corpo[0]["ticker"] == "PETR4"
@@ -73,12 +73,12 @@ def test_a_cotacao_vem_envelopada_com_todos_os_campos(client, payload_v2) -> Non
     """FR-015 — o que se sabe de cada ativo não muda."""
     _rota("PETR4").mock(return_value=httpx.Response(200, json=payload_v2("PETR4")))
 
-    item = client.get("/ticker?ticker=PETR4").json()[0]
+    item = client.get("/acoes?ticker=PETR4").json()[0]
 
-    q = item["quote"]
-    for campo in ("ticker", "shortName", "currency", "price", "quotedAt", "source", "cached"):
+    q = item["cotacao"]
+    for campo in ("ticker", "nomeCurto", "moeda", "preco", "cotadoEm", "fonte", "emCache"):
         assert campo in q, f"campo ausente: {campo}"
-    assert isinstance(q["price"], int | float)
+    assert isinstance(q["preco"], int | float)
 
 
 @respx.mock
@@ -88,12 +88,12 @@ def test_inexistente_volta_marcado_ao_lado_dos_que_deram_certo(client, payload_v
         return_value=httpx.Response(200, json=payload_v2("PETR4"))
     )
 
-    corpo = client.get("/ticker?ticker=PETR4&ticker=ZZZZ9").json()
+    corpo = client.get("/acoes?ticker=PETR4&ticker=ZZZZ9").json()
 
     por_codigo = {item["ticker"]: item for item in corpo}
-    assert por_codigo["PETR4"]["status"] == "found"
-    assert por_codigo["ZZZZ9"]["status"] == "notFound"
-    assert por_codigo["ZZZZ9"]["quote"] is None
+    assert por_codigo["PETR4"]["situacao"] == "encontrada"
+    assert por_codigo["ZZZZ9"]["situacao"] == "naoEncontrada"
+    assert por_codigo["ZZZZ9"]["cotacao"] is None
 
 
 @respx.mock
@@ -101,7 +101,7 @@ def test_formato_invalido_derruba_tudo_sem_chamar_a_fonte(client) -> None:
     """FR-011, SC-005 — erro de quem chamou não é resultado de busca."""
     rota = respx.get(url__startswith=BRAPI_BASE_URL)
 
-    resposta = client.get("/ticker?ticker=PETR4&ticker=PETR")
+    resposta = client.get("/acoes?ticker=PETR4&ticker=PETR")
 
     assert resposta.status_code == 400
     assert rota.call_count == 0
@@ -113,7 +113,7 @@ def test_acima_do_limite_devolve_400_explicando(client) -> None:
     """FR-010."""
     rota = respx.get(url__startswith=BRAPI_BASE_URL)
 
-    resposta = client.get("/ticker?ticker=PETR4&ticker=ITSA4&ticker=VALE3&ticker=BOVA11")
+    resposta = client.get("/acoes?ticker=PETR4&ticker=ITSA4&ticker=VALE3&ticker=BOVA11")
 
     assert resposta.status_code == 400
     assert rota.call_count == 0
@@ -123,7 +123,7 @@ def test_acima_do_limite_devolve_400_explicando(client) -> None:
 
 
 def test_sem_nenhum_ativo_devolve_400(client) -> None:
-    assert client.get("/ticker").status_code == 400
+    assert client.get("/acoes").status_code == 400
 
 
 @respx.mock
@@ -148,12 +148,12 @@ def test_segunda_consulta_marca_origem_por_ativo(test_settings, payload_v2) -> N
             provider, cache, max_tickers=3
         )
 
-        c.get("/ticker?ticker=ITSA4")           # aquece o cache com um ativo
-        corpo = c.get("/ticker?ticker=ITSA4&ticker=PETR4").json()
+        c.get("/acoes?ticker=ITSA4")           # aquece o cache com um ativo
+        corpo = c.get("/acoes?ticker=ITSA4&ticker=PETR4").json()
 
     por_codigo = {item["ticker"]: item for item in corpo}
-    assert por_codigo["ITSA4"]["quote"]["cached"] is True
-    assert por_codigo["PETR4"]["quote"]["cached"] is False
+    assert por_codigo["ITSA4"]["cotacao"]["emCache"] is True
+    assert por_codigo["PETR4"]["cotacao"]["emCache"] is False
     # SC-004: a fonte nunca viu ITSA4 na segunda chamada
     assert rota_itsa.call_count == 1
     assert rota_petr.call_count == 1
@@ -167,7 +167,7 @@ def test_cota_esgotada_repassa_o_retry_after(client) -> None:
         return_value=httpx.Response(429, json={}, headers={"Retry-After": "30"})
     )
 
-    resposta = client.get("/ticker?ticker=PETR4")
+    resposta = client.get("/acoes?ticker=PETR4")
 
     assert resposta.status_code == 503
     assert resposta.headers["Retry-After"] == "30"

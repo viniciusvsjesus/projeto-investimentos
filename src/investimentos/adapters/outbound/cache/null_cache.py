@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
+from investimentos.application.ports.quote_cache import CachedQuote
 from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
 
@@ -19,7 +20,7 @@ from investimentos.domain.model.ticker import Ticker
 class NullQuoteCache:
     """Cache que não guarda nada."""
 
-    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, CachedQuote]:
         return {}
 
     async def set_many(self, quotes: Iterable[Quote]) -> None:

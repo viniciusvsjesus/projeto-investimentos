@@ -1,4 +1,4 @@
-"""T029, T030 — GET /ticker/{ticker}: um ativo, um objeto (US3)."""
+"""T009, T011 — GET /acoes/{ticker}: um ativo, um objeto (US1)."""
 
 from __future__ import annotations
 
@@ -17,19 +17,19 @@ def test_devolve_um_objeto_e_nao_lista(client, payload_v2) -> None:
     """Artigo XI — item devolve objeto."""
     _rota().mock(return_value=httpx.Response(200, json=payload_v2("PETR4")))
 
-    corpo = client.get("/ticker/PETR4").json()
+    corpo = client.get("/acoes/PETR4").json()
 
     assert isinstance(corpo, dict)
     assert corpo["ticker"] == "PETR4"
-    assert corpo["price"] == 36.65
-    assert corpo["cached"] is False
+    assert corpo["preco"] == 36.65
+    assert corpo["emCache"] is False
 
 
 @respx.mock
 def test_aceita_minusculas(client, payload_v2) -> None:
     rota = _rota().mock(return_value=httpx.Response(200, json=payload_v2("PETR4")))
 
-    assert client.get("/ticker/petr4").json()["ticker"] == "PETR4"
+    assert client.get("/acoes/petr4").json()["ticker"] == "PETR4"
     assert rota.calls.last.request.url.params["symbols"] == "PETR4"
 
 
@@ -40,14 +40,14 @@ def test_ativo_inexistente_devolve_404(client) -> None:
         return_value=httpx.Response(200, json={"results": []})
     )
 
-    assert client.get("/ticker/ZZZZ9").status_code == 404
+    assert client.get("/acoes/ZZZZ9").status_code == 404
 
 
 @respx.mock
 def test_formato_invalido_devolve_400_sem_chamar_a_fonte(client) -> None:
     rota = respx.get(url__startswith="https://brapi.test")
 
-    resposta = client.get("/ticker/PETR")
+    resposta = client.get("/acoes/PETR")
 
     assert resposta.status_code == 400
     assert rota.call_count == 0
@@ -61,4 +61,4 @@ def test_rota_antiga_sumiu(client) -> None:
 @respx.mock
 def test_timeout_da_fonte_devolve_504(client) -> None:
     _rota().mock(side_effect=httpx.ReadTimeout("demorou"))
-    assert client.get("/ticker/PETR4").status_code == 504
+    assert client.get("/acoes/PETR4").status_code == 504

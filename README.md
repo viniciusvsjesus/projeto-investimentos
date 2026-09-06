@@ -33,7 +33,7 @@ cp .env.example .env      # e coloque seu token da BRAPI no arquivo
 docker compose up -d
 ```
 
-Abra <http://localhost:8000/ticker/PETR4> no navegador. O JSON aparece direto —
+Abra <http://localhost:8000/acoes/ITSA4> no navegador. O JSON aparece direto —
 sem tela, sem botão.
 
 A raiz <http://localhost:8000> devolve um índice, também em JSON, com o estado do
@@ -47,23 +47,23 @@ Sem token o serviço sobe do mesmo jeito, mas só os tickers de sandbox
 ### Um ativo
 
 ```bash
-curl http://localhost:8000/ticker/PETR4
+curl http://localhost:8000/acoes/ITSA4
 ```
 
 ```json
 {
-  "ticker": "PETR4",
-  "shortName": "PETR4",
-  "longName": "Petroleo Brasileiro SA Petrobras",
-  "currency": "BRL",
-  "price": 36.65,
-  "change": -0.35,
-  "changePercent": -0.95,
+  "ticker": "ITSA4",
+  "nomeCurto": "ITSA4",
+  "nomeLongo": "Itausa SA",
+  "moeda": "BRL",
+  "preco": 11.42,
+  "variacao": -0.35,
+  "variacaoPercentual": -0.95,
   "volume": 27681100,
-  "marketCap": 483937892568,
-  "quotedAt": "2026-09-06T17:24:54Z",
-  "source": "brapi",
-  "cached": false
+  "valorDeMercado": 483937892568,
+  "cotadoEm": "2026-09-06T17:24:54Z",
+  "fonte": "brapi",
+  "emCache": false
 }
 ```
 
@@ -73,13 +73,13 @@ Repita o parâmetro `ticker`. A resposta é **sempre uma lista**, mesmo com um
 elemento só, e vem na ordem em que os ativos foram pedidos.
 
 ```bash
-curl "http://localhost:8000/ticker?ticker=ITSA4&ticker=PETR4"
+curl "http://localhost:8000/acoes?ticker=ITSA4&ticker=PETR4"
 ```
 
 ```json
 [
-  { "ticker": "ITSA4", "status": "found",    "quote": { "price": 11.42, "cached": true,  "...": "..." } },
-  { "ticker": "PETR4", "status": "found",    "quote": { "price": 36.65, "cached": false, "...": "..." } }
+  { "ticker": "ITSA4", "situacao": "encontrada",    "cotacao": { "preco": 11.42, "emCache": true,  "...": "..." } },
+  { "ticker": "PETR4", "situacao": "encontrada",    "cotacao": { "preco": 36.65, "emCache": false, "...": "..." } }
 ]
 ```
 
@@ -87,8 +87,8 @@ Um código que a bolsa não conhece volta na lista marcado, sem derrubar os outr
 
 ```json
 [
-  { "ticker": "PETR4", "status": "found",    "quote": { "...": "..." } },
-  { "ticker": "ZZZZ9", "status": "notFound", "quote": null }
+  { "ticker": "PETR4", "situacao": "encontrada",    "cotacao": { "...": "..." } },
+  { "ticker": "ZZZZ9", "situacao": "naoEncontrada", "cotacao": null }
 ]
 ```
 
@@ -99,32 +99,56 @@ gastar qualquer chamada à BRAPI. Erro de quem chamou não é resultado de busca
 
 Cada ativo é procurado no cache **individualmente**. Só os ausentes vão à fonte,
 e numa **única** chamada. Se você pedir três ativos e dois já estiverem em
-cache, a BRAPI recebe uma requisição com um código só — e o campo `cached` de
-cada item mostra de onde cada cotação veio, sem precisar olhar log.
+cache, a BRAPI recebe uma requisição com um código só — e o campo `emCache` de
+cada item mostra de onde cada cotação veio.
 
 Se todos estiverem em cache, a BRAPI não é chamada nenhuma vez.
+
+### A resposta diz por quanto tempo ainda vale
+
+O `Cache-Control` traz a validade **restante** da cotação, não o TTL configurado:
+
+```bash
+curl -sI http://localhost:8000/acoes/ITSA4 | grep -i cache-control
+# cache-control: public, max-age=60
+
+sleep 20
+curl -sI http://localhost:8000/acoes/ITSA4 | grep -i cache-control
+# cache-control: public, max-age=40
+```
+
+Numa lista com validades diferentes vence a **menor** — o cabeçalho descreve a
+resposta inteira, e ela deixa de servir quando o primeiro item vence. Sem
+cotação válida, ou em qualquer erro, é `no-store`.
 
 ### Rotas
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/ticker/{ticker}` | **Um ativo** — devolve um objeto; `404` se não existir |
-| `GET` | `/ticker?ticker=A&ticker=B` | **Vários ativos** — devolve uma lista |
+| `GET` | `/acoes/{ticker}` | **Um ativo** — devolve um objeto; `404` se não existir |
+| `GET` | `/acoes?ticker=A&ticker=B` | **Vários ativos** — devolve uma lista |
 | `GET` | `/` | Índice do serviço, em JSON |
 | `GET` | `/health` | Saúde do serviço e do cache |
 | `GET` | `/openapi.json` | Especificação OpenAPI |
-| `GET` | `/docs` | Documentação interativa (opcional — a API é usável sem ela) |
+| `GET` | `/docs` | Documentação interativa (opcional) |
+
+O recurso se chama pelo **dado** que devolve — uma ação —, não pelo
+identificador. `ticker` é o identificador, e é o papel dele.
 
 Códigos aceitos seguem o padrão da B3: quatro caracteres começando por letra,
 mais um ou dois dígitos, com `F` opcional. Aceita minúsculas.
-Exemplos: `PETR4`, `B3SA3`, `BOVA11`, `MXRF11`, `AAPL34`, `petr4f`.
+Exemplos: `ITSA4`, `PETR4`, `B3SA3`, `BOVA11`, `AAPL34`, `petr4f`.
 
-O limite padrão é de **3 ativos por requisição** — o teto assumido do plano
-gratuito da BRAPI. Ajustável em `MAX_TICKERS_PER_REQUEST`.
+O limite padrão é de **3 ativos por requisição**, ajustável em
+`MAX_TICKERS_PER_REQUEST`.
 
 ### Erros
 
 Toda falha usa o mesmo corpo, no estilo RFC 9457:
+
+Os **nomes** dos campos seguem o RFC 9457 e não são traduzidos — é o que dá
+sentido ao `application/problem+json` que a API declara. Os **valores**, que são
+a parte destinada a humanos, estão em português.
 
 ```json
 {
@@ -132,7 +156,7 @@ Toda falha usa o mesmo corpo, no estilo RFC 9457:
   "title": "Código de ativo inválido",
   "status": 400,
   "detail": "O código 'PETR' não segue o padrão da B3: ...",
-  "instance": "/ticker/PETR"
+  "instance": "/acoes/PETR"
 }
 ```
 
@@ -180,7 +204,7 @@ retorno `float | None`, e qualquer gerador de cliente produziria um
 Depois do `docker compose up -d`, abra no Chrome:
 
 ```
-http://localhost:8000/ticker/PETR4
+http://localhost:8000/acoes/ITSA4
 ```
 
 O JSON tem que trazer `"source": "brapi"` e um `quotedAt` recente. Se vier
@@ -404,6 +428,8 @@ quando o payload real entrou como fixture.
 
 **Spec 001** entregou a cotação de um ativo. **Spec 002** acrescentou a consulta
 de vários numa chamada, com o cache consultado ativo a ativo para poupar cota.
+**Spec 003** renomeou o recurso para `/acoes`, traduziu o contrato para
+português e passou a informar a validade restante no `Cache-Control`.
 
 Deliberadamente fora até aqui: histórico, dividendos, fundamentalistas, FIIs,
 cripto, autenticação da nossa API, banco de dados e cálculo de carteira. Cada um

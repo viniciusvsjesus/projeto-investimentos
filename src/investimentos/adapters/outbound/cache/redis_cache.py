@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from investimentos.adapters.outbound.cache import serializer
+from investimentos.application.ports.quote_cache import CachedQuote
 from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
 
@@ -40,28 +41,45 @@ class RedisQuoteCache:
     def _key(ticker: Ticker) -> str:
         return f"{_KEY_PREFIX}:{ticker.value}"
 
-    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, CachedQuote]:
+        """Lê valor e validade restante de cada ativo numa ida só.
+
+        ADR-018: o ``max-age`` que a API anuncia precisa ser o tempo que ainda
+        resta, não o TTL configurado. ``GET`` e ``TTL`` viajam no mesmo
+        pipeline, então a leitura continua sendo uma só (ADR-011).
+        """
         if not tickers:
             return {}
 
+        chaves = [self._key(t) for t in tickers]
         try:
-            brutos = await self._redis.mget([self._key(t) for t in tickers])
+            async with self._redis.pipeline(transaction=False) as pipe:
+                for chave in chaves:
+                    pipe.get(chave)
+                for chave in chaves:
+                    pipe.ttl(chave)
+                resultados = await pipe.execute()
         except RedisError:
             logger.warning("Cache indisponível na leitura; seguindo para a fonte")
             return {}
 
-        encontrados: dict[Ticker, Quote] = {}
-        for ticker, bruto in zip(tickers, brutos, strict=False):
+        metade = len(chaves)
+        valores, ttls = resultados[:metade], resultados[metade:]
+
+        encontrados: dict[Ticker, CachedQuote] = {}
+        for ticker, bruto, ttl in zip(tickers, valores, ttls, strict=False):
             if bruto is None:
                 continue
             if isinstance(bruto, bytes):
                 bruto = bruto.decode("utf-8")
             try:
-                encontrados[ticker] = serializer.loads(bruto)
+                quote = serializer.loads(bruto)
             except Exception:
                 # Dado corrompido ou de formato antigo: trata como ausente e
                 # deixa a próxima gravação sobrescrever.
                 logger.warning("Valor em cache ilegível para %s; tratando como ausente", ticker)
+                continue
+            encontrados[ticker] = CachedQuote(quote=quote, ttl_seconds=_ttl_valido(ttl))
 
         return encontrados
 
@@ -87,3 +105,15 @@ class RedisQuoteCache:
     async def close(self) -> None:
         with contextlib.suppress(RedisError, AttributeError):
             await self._redis.aclose()
+
+
+def _ttl_valido(bruto: object) -> int | None:
+    """Normaliza o TTL do Redis.
+
+    O Redis devolve ``-1`` para chave sem expiração e ``-2`` para chave
+    inexistente. Qualquer valor não positivo vira ausência de validade — nunca
+    um ``max-age`` negativo ou eterno escapando para a resposta (ADR-018).
+    """
+    if not isinstance(bruto, int) or bruto <= 0:
+        return None
+    return bruto

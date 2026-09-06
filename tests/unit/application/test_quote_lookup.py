@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from investimentos.application.ports.quote_cache import CachedQuote
 from investimentos.application.usecases.get_quote import (
     QuoteLookup,
     QuoteOrigin,
@@ -60,3 +61,41 @@ def test_lookup_conta_as_origens() -> None:
     )
     assert lookup.from_cache_count == 2
     assert lookup.from_source_count == 1
+
+
+def test_cached_quote_carrega_cotacao_e_validade() -> None:
+    entrada = CachedQuote(build_quote("PETR4"), ttl_seconds=42)
+    assert entrada.quote.symbol == "PETR4"
+    assert entrada.ttl_seconds == 42
+
+
+def test_cached_quote_sem_validade_informada() -> None:
+    assert CachedQuote(build_quote("PETR4")).ttl_seconds is None
+
+
+def test_min_valid_for_e_o_menor_entre_os_itens() -> None:
+    """ADR-019 — o cabeçalho descreve a resposta inteira, não cada item."""
+    lookup = QuoteLookup(
+        (
+            QuoteResolution(Ticker("PETR4"), build_quote("PETR4"), QuoteOrigin.CACHE, 50),
+            QuoteResolution(Ticker("ITSA4"), build_quote("ITSA4"), QuoteOrigin.CACHE, 12),
+            QuoteResolution(Ticker("VALE3"), build_quote("VALE3"), QuoteOrigin.SOURCE, 60),
+        )
+    )
+    assert lookup.min_valid_for == 12
+
+
+def test_min_valid_for_ignora_quem_nao_tem_cotacao() -> None:
+    lookup = QuoteLookup(
+        (
+            QuoteResolution(Ticker("PETR4"), build_quote("PETR4"), QuoteOrigin.CACHE, 30),
+            QuoteResolution(Ticker("ZZZZ9")),
+        )
+    )
+    assert lookup.min_valid_for == 30
+
+
+def test_min_valid_for_sem_nenhuma_validade_e_none() -> None:
+    """Vira no-store na borda (FR-012)."""
+    lookup = QuoteLookup((QuoteResolution(Ticker("ZZZZ9")),))
+    assert lookup.min_valid_for is None

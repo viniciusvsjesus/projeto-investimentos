@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from investimentos.domain.model.quote import Quote
 from investimentos.domain.model.ticker import Ticker
+
+
+@dataclass(frozen=True, slots=True)
+class CachedQuote:
+    """Uma cotação em cache e por quanto tempo ela ainda vale.
+
+    ADR-018: validade é assunto do cache, não da cotação — a mesma cotação tem
+    validades diferentes conforme quando entrou. Por isso o tipo vive junto da
+    porta, e não em ``domain/``.
+
+    ``ttl_seconds`` é ``None`` quando o cache não sabe informar. Valor não
+    positivo nunca chega aqui: o adapter normaliza antes.
+    """
+
+    quote: Quote
+    ttl_seconds: int | None = None
 
 
 class QuoteCachePort(Protocol):
@@ -22,10 +39,11 @@ class QuoteCachePort(Protocol):
     Redis — trocaria um gargalo por outro.
     """
 
-    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, Quote]:
-        """Devolve as cotações em cache. Ausentes simplesmente não vêm no mapa.
+    async def get_many(self, tickers: Sequence[Ticker]) -> Mapping[Ticker, CachedQuote]:
+        """Devolve o que está em cache, com a validade restante de cada um.
 
-        Indisponibilidade do cache devolve mapa vazio: todos viram faltantes.
+        Ausentes simplesmente não vêm no mapa. Indisponibilidade do cache
+        devolve mapa vazio: todos viram faltantes.
         """
         ...
 
