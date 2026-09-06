@@ -1,0 +1,22 @@
+# O repositório guarda tudo com fim de linha LF, e é assim que sai no checkout,
+# em qualquer sistema operacional.
+#
+# Sem isto, o Git for Windows converte LF para CRLF ao gravar no disco
+# (core.autocrlf=true, que é o padrão dele). O resultado é que a mesma árvore
+# aparece "modificada" com 5.464 linhas alteradas quando lida de um Linux — e o
+# CI, que roda em Linux, acaba vendo um código diferente do que você editou.
+* text=auto eol=lf
+
+# Arquivos que precisam de LF mesmo em ferramenta que insista em CRLF: um
+# script de shell com CRLF quebra dentro do container com "bad interpreter".
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Binários: o Git não deve tentar converter nada aqui.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
