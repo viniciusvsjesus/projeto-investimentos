@@ -3,11 +3,11 @@
 > Documento de governança. Toda especificação, plano, tarefa e linha de código
 > deste repositório é avaliada contra estes artigos. Em caso de conflito entre
 > um artigo e uma decisão de implementação, o artigo vence — ou o artigo é
-> emendado explicitamente (ver Artigo X).
+> emendado explicitamente (ver Artigo XII).
 
-- **Versão:** 1.0.0
+- **Versão:** 1.1.0
 - **Ratificada em:** 2026-09-03
-- **Última emenda:** 2026-09-03
+- **Última emenda:** 2026-09-06
 
 ---
 
@@ -160,7 +160,63 @@ A API nunca vaza exceção crua nem *stack trace*.
 - Endpoint `/health` reporta o estado do próprio serviço e de suas
   dependências, e é o que o Docker consulta.
 
-## Artigo X — Emendas
+## Artigo X — Domain-Driven Design
+
+O domínio é modelado com os conceitos do negócio, não com estruturas genéricas
+carregando dados de um lado para o outro.
+
+- **Linguagem ubíqua.** O nome no código é o nome que se usa ao falar do
+  assunto. `Ticker`, `Quote`, `Cotação` — não `Data`, `Info`, `Manager`,
+  `Helper`. Se a conversa com uma pessoa de negócio usa uma palavra que o código
+  não tem, falta um conceito no modelo.
+- **Value Object por padrão.** Quando dois objetos com os mesmos valores são a
+  mesma coisa, eles são Value Objects: imutáveis, comparados por valor, sem
+  identidade. Entidade só quando existe identidade que sobrevive à mudança de
+  atributo. `Ticker` e `Quote` são Value Objects — e é por isso que o preço não
+  pode ser alterado depois de construído.
+- **Invariante vive no modelo.** A regra que define o que é válido fica no
+  construtor do objeto, não numa camada de validação à parte. Consequência
+  prática: se o objeto existe, ele é válido, e nenhuma outra camada precisa
+  revalidar. Um `Ticker` mal formado não chega a existir.
+- **Domínio não é anêmico.** Comportamento mora junto do dado. Um modelo que é
+  só um saco de atributos, manipulado por "services" de fora, é estrutura de
+  dados com nome de domínio.
+- **Contexto delimitado.** O contexto deste serviço é *cotação de ativos*.
+  Conceito de outro contexto — carteira, posição, imposto — não entra no modelo
+  sem uma spec que o justifique, mesmo que "fosse fácil".
+- **Tradução na fronteira.** O vocabulário de uma fonte externa não vira o nosso
+  vocabulário. `regularMarketPrice` é palavra da BRAPI; do lado de dentro é
+  `price`. O tradutor fica no adapter, nunca no domínio.
+
+## Artigo XI — Design de API
+
+A interface HTTP é contrato público. Ela é desenhada, não é consequência
+acidental de como o código ficou organizado.
+
+- **O caminho nomeia o recurso; o verbo mora no método.** `GET /ticker/PETR4`,
+  nunca `GET /buscarCotacao`. Nada de verbo no caminho.
+- **Item e coleção têm formas próprias e previsíveis.** `/ticker/{codigo}`
+  devolve **um objeto**. `/ticker` devolve **uma lista**, e continua devolvendo
+  uma lista quando o resultado tem um elemento só ou nenhum. O consumidor nunca
+  precisa checar o tipo antes de ler.
+- **Filtro e seleção vão em parâmetro de consulta.** O caminho identifica *o
+  quê*; a query diz *quais* e *como*. Paginação, ordenação e filtro nunca viram
+  segmento de caminho.
+- **O contrato é nosso.** Nenhum nome de campo, código de erro ou formato de
+  data vaza de uma fonte externa para a nossa resposta. Se a fonte mudar, muda o
+  tradutor — a resposta que publicamos permanece.
+- **Status HTTP tem significado, e ele é respeitado.** `400` é erro de quem
+  chamou; `404` é recurso inexistente; `5xx` é falha nossa ou da fonte. Nunca
+  `200` com corpo de erro dentro, nunca `500` para entrada inválida.
+- **Erro é resposta, não acidente.** Todo erro tem o mesmo corpo, documentado no
+  OpenAPI, sem stack trace e sem detalhe interno (ver Artigo VIII).
+- **Nomes consistentes na fronteira.** Um estilo só para os campos em toda a
+  API. Campo com o mesmo significado tem o mesmo nome em todas as rotas.
+- **Mudança que quebra contrato é decisão registrada.** Enquanto não houver
+  consumidor externo, quebrar é permitido — mas a spec que introduz a quebra
+  precisa dizer o que quebrou e por quê.
+
+## Artigo XII — Emendas
 
 Esta constituição só muda por emenda explícita, que exige:
 
