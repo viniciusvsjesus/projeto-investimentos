@@ -1,0 +1,267 @@
+# Contrato PUBLICADO pela nossa API a partir da Spec 002.
+# Escrito ANTES da implementação (Artigo I). Substitui o contrato da Spec 001,
+# que fica no repositório como registro histórico daquela entrega.
+# O teste integration/test_openapi.py compara a implementação com ESTE arquivo.
+openapi: 3.1.0
+
+info:
+  title: Projeto Investimentos API
+  version: 2.0.0
+  description: |
+    API que expõe cotações de ativos da B3 em um contrato próprio e estável,
+    isolando os consumidores da fonte externa de dados.
+
+    Versão 2.0.0 — quebra de contrato registrada no FR-017 da Spec 002:
+    a rota `/cotacao/{ticker}` deixou de existir e foi substituída por
+    `/ticker/{ticker}` (item) e `/ticker` (coleção).
+
+servers:
+  - url: http://localhost:8000
+    description: Ambiente local via docker compose
+
+tags:
+  - name: ticker
+    description: Cotações de ativos
+  - name: system
+    description: Saúde e metadados do serviço
+
+paths:
+  /:
+    get:
+      tags: [system]
+      summary: Índice do serviço
+      operationId: index
+      responses:
+        "200":
+          description: Índice do serviço, em JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexResponse" }
+
+  /health:
+    get:
+      tags: [system]
+      summary: Estado do serviço e das dependências
+      operationId: health
+      responses:
+        "200":
+          description: Serviço no ar; `degraded` quando o cache está fora
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /ticker/{ticker}:
+    get:
+      tags: [ticker]
+      summary: Cotação de um ativo
+      description: |
+        Devolve **um objeto**. Ativo inexistente é `404` — aqui o recurso pedido
+        não existe (Artigo XI).
+      operationId: getTicker
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          description: |
+            Código de negociação na B3. Aceita minúsculas.
+            O `pattern` é documentação do formato: a regra vive no domínio, e um
+            código fora dela devolve `400` com o corpo de erro padrão.
+          schema:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9]{3}[0-9]{1,2}[Ff]?$"
+            examples: [PETR4, B3SA3, BOVA11, AAPL34]
+      responses:
+        "200":
+          description: Cotação encontrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuoteResponse" }
+        "400":
+          description: Código com formato inválido
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "404":
+          description: Ativo não encontrado
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "502":
+          description: Falha de comunicação ou contrato com a fonte
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "503":
+          description: Cota da fonte esgotada
+          headers:
+            Retry-After:
+              description: Segundos a aguardar, repassados da fonte
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "504":
+          description: Fonte excedeu o tempo limite
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+
+  /ticker:
+    get:
+      tags: [ticker]
+      summary: Cotação de vários ativos
+      description: |
+        Devolve **sempre uma lista**, inclusive com um elemento só (Artigo XI).
+
+        Cada ativo é procurado no cache individualmente; apenas os ausentes vão
+        à fonte externa, e em uma única chamada.
+
+        Ativo bem formado que a bolsa não conhece volta na lista com
+        `status: notFound`. Já um código com formato inválido derruba a
+        requisição inteira com `400`, sem consumir cota.
+      operationId: listTickers
+      parameters:
+        - name: ticker
+          in: query
+          required: true
+          description: |
+            Código de negociação. Repita o parâmetro para consultar vários:
+            `?ticker=ITSA4&ticker=PETR4`. Repetições do mesmo código contam uma
+            vez. A ordem da resposta acompanha a ordem do pedido.
+          schema:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              pattern: "^[A-Za-z][A-Za-z0-9]{3}[0-9]{1,2}[Ff]?$"
+          examples:
+            dois:
+              value: [ITSA4, PETR4]
+      responses:
+        "200":
+          description: Consulta resolvida; itens não encontrados vêm marcados
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TickerLookupItem" }
+        "400":
+          description: Código inválido, nenhum código, ou acima do limite
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "502":
+          description: Falha de comunicação ou contrato com a fonte
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "503":
+          description: Cota da fonte esgotada
+          headers:
+            Retry-After:
+              description: Segundos a aguardar, repassados da fonte
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "504":
+          description: Fonte excedeu o tempo limite
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+
+components:
+  schemas:
+    QuoteResponse:
+      type: object
+      description: Cotação de um ativo. Idêntica à da versão 1 — a Spec 002 não muda o que se sabe de cada ativo.
+      required: [ticker, shortName, currency, price, quotedAt, source, cached]
+      properties:
+        ticker:        { type: string, example: PETR4 }
+        shortName:     { type: string, example: PETR4 }
+        longName:      { type: [string, "null"], example: Petroleo Brasileiro SA Petrobras }
+        currency:      { type: string, minLength: 3, maxLength: 3, example: BRL }
+        price:         { type: number, example: 36.65 }
+        change:        { type: [number, "null"], example: -0.35 }
+        changePercent: { type: [number, "null"], example: -0.95 }
+        volume:        { type: [integer, "null"], example: 27681100 }
+        marketCap:     { type: [number, "null"], example: 483937892568 }
+        quotedAt:
+          type: string
+          format: date-time
+          description: Instante informado pela fonte, em UTC
+          example: "2026-09-06T17:24:54Z"
+        source:        { type: string, example: brapi }
+        cached:
+          type: boolean
+          description: Indica se veio do cache — torna o SC-004 observável
+          example: false
+
+    TickerLookupItem:
+      type: object
+      description: |
+        Um ativo pedido e o que aconteceu com ele. A cotação vem envelopada, e
+        não achatada, para que `price` continue obrigatório e não anulável.
+      required: [ticker, status, quote]
+      properties:
+        ticker:
+          type: string
+          description: O código pedido, normalizado para maiúsculas
+          example: PETR4
+        status:
+          type: string
+          enum: [found, notFound]
+        quote:
+          description: A cotação, ou `null` quando `status` é `notFound`
+          oneOf:
+            - $ref: "#/components/schemas/QuoteResponse"
+            - type: "null"
+
+    RotasDisponiveis:
+      type: object
+      required: [ticker, tickers, saude, openapi, documentacao]
+      properties:
+        ticker:       { type: string, example: "/ticker/{ticker}" }
+        tickers:      { type: string, example: "/ticker?ticker=ITSA4&ticker=PETR4" }
+        saude:        { type: string, example: /health }
+        openapi:      { type: string, example: /openapi.json }
+        documentacao: { type: string, example: /docs }
+
+    IndexResponse:
+      type: object
+      required: [servico, versao, status, exemplo, rotas]
+      properties:
+        servico: { type: string, example: Projeto Investimentos API }
+        versao:  { type: string, example: 2.0.0 }
+        status:  { type: string, example: ok }
+        exemplo:
+          type: string
+          description: URL pronta para copiar e colar no navegador
+          example: http://localhost:8000/ticker/PETR4
+        rotas:
+          $ref: "#/components/schemas/RotasDisponiveis"
+
+    HealthResponse:
+      type: object
+      required: [status, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        dependencies:
+          type: object
+          properties:
+            cache:
+              type: string
+              enum: [ok, unavailable, disabled]
+
+    ProblemDetail:
+      type: object
+      description: Corpo único de erro para toda a API (Artigo VIII).
+      required: [type, title, status]
+      properties:
+        type:     { type: string, example: "https://projeto-investimentos/errors/too-many-tickers" }
+        title:    { type: string, example: "Ativos demais na requisição" }
+        status:   { type: integer, example: 400 }
+        detail:   { type: [string, "null"] }
+        instance: { type: [string, "null"], example: "/ticker" }
